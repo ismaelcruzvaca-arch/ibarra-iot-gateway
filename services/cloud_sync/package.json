@@ -1,0 +1,17 @@
+{
+  "name": "gema-cloud-sync",
+  "version": "1.0.0",
+  "private": true,
+  "description": "GEMA V3.0 Cloud Sync — SQLite to Hasura GraphQL upload with Exponential Backoff",
+  "main": "cloud_sync.js",
+  "scripts": {
+    "start": "node cloud_sync.js",
+    "test": "node --test cloud_sync.test.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0"
+  },
+  "devDependencies": {
+    "sql.js": "^1.14.1"
+  }
+}

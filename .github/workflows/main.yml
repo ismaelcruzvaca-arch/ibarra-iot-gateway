@@ -1,0 +1,100 @@
+name: GEMA V3 CI/CD — Multi-Arch Build & Push
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  REGISTRY: ghcr.io
+  REGISTRY_NAMESPACE: chocolate-ibarra
+
+jobs:
+  test-edge-worker:
+    name: Test Edge Worker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: services/edge_worker/package-lock.json
+
+      - name: Install dependencies
+        working-directory: services/edge_worker
+        run: npm ci
+
+      - name: Run tests
+        working-directory: services/edge_worker
+        run: npm test
+
+  test-cloud-sync:
+    name: Test Cloud Sync
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: services/cloud_sync/package-lock.json
+
+      - name: Install dependencies
+        working-directory: services/cloud_sync
+        run: npm ci
+
+      - name: Run tests
+        working-directory: services/cloud_sync
+        run: npm test
+
+  build-and-push:
+    name: Build & Push Multi-Arch Images
+    needs:
+      - test-edge-worker
+      - test-cloud-sync
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Build and push edge_worker
+        uses: docker/build-push-action@v6
+        with:
+          context: services/edge_worker
+          file: services/edge_worker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/gema-edge-worker:latest
+            ${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/gema-edge-worker:${{ github.sha }}
+
+      - name: Build and push cloud_sync
+        uses: docker/build-push-action@v6
+        with:
+          context: services/cloud_sync
+          file: services/cloud_sync/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/gema-cloud-sync:latest
+            ${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/gema-cloud-sync:${{ github.sha }}
