@@ -9,6 +9,11 @@ struct ProductionEvent {
     uint8_t pinId;
 };
 
+struct SpooledEvent {
+    uint32_t cycleCount;
+    time_t epochTime;
+};
+
 // Pure function for debounce logic to test
 bool check_debounce(uint64_t current_us, uint64_t last_us, uint64_t debounce_us) {
     return (current_us - last_us) >= debounce_us;
@@ -23,6 +28,16 @@ void test_production_event_struct_members(void) {
     TEST_ASSERT_EQUAL_UINT32(100, event.cycleCount);
     TEST_ASSERT_EQUAL_UINT32(123456, event.timestamp);
     TEST_ASSERT_EQUAL_UINT8(18, event.pinId);
+}
+
+void test_spooled_event_struct_members(void) {
+    SpooledEvent event;
+    event.cycleCount = 100;
+    event.epochTime = 1680000000;
+
+    TEST_ASSERT_EQUAL_UINT32(100, event.cycleCount);
+    TEST_ASSERT_EQUAL(4, sizeof(event.cycleCount));
+    TEST_ASSERT_GREATER_OR_EQUAL(4, sizeof(event.epochTime));
 }
 
 void test_debounce_logic_pass(void) {
@@ -104,6 +119,7 @@ void test_payload_serialization_structure(void) {
 void setup() {
     UNITY_BEGIN();
     RUN_TEST(test_production_event_struct_members);
+    RUN_TEST(test_spooled_event_struct_members);
     RUN_TEST(test_debounce_logic_pass);
     RUN_TEST(test_debounce_logic_block);
     RUN_TEST(test_ema_initialization);
@@ -122,6 +138,7 @@ void loop() {
 int main(int argc, char **argv) {
     UNITY_BEGIN();
     RUN_TEST(test_production_event_struct_members);
+    RUN_TEST(test_spooled_event_struct_members);
     RUN_TEST(test_debounce_logic_pass);
     RUN_TEST(test_debounce_logic_block);
     RUN_TEST(test_ema_initialization);

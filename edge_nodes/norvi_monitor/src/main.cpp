@@ -8,6 +8,7 @@
 #include "include/secrets.h"
 #include "PayloadSerializer.h"
 #include <time.h>
+#include <LittleFS.h>
 
 
 #ifndef INPUT_PIN
@@ -19,6 +20,11 @@ struct ProductionEvent {
     uint32_t cycleCount;      // Monotonically increasing counter for production cycles
     unsigned long timestamp;  // Local timestamp of the event in milliseconds
     uint8_t pinId;            // The hardware ID of the digital pin that triggered the event
+};
+
+struct SpooledEvent {
+    uint32_t cycleCount;
+    time_t epochTime;
 };
 
 // Queue handle
@@ -72,6 +78,7 @@ void vTaskNetworking(void *pvParameters) {
     unsigned long lastWifiRetryMs = 0;
     unsigned long wifiConnectStartMs = 0;
     unsigned long lastMqttRetryMs = 0;
+    bool ntpSynced = false;
 
     Serial.println("[Networking] Starting networking task on Core 0...");
 
@@ -128,6 +135,7 @@ void vTaskNetworking(void *pvParameters) {
 
                 if (WiFi.status() == WL_CONNECTED) {
                     Serial.println("[Networking] NTP synchronized. Setting client certificates...");
+                    ntpSynced = true;
                     espClient.setCACert(CA_CERT);
                     espClient.setCertificate(CLIENT_CERT);
                     espClient.setPrivateKey(CLIENT_KEY);
@@ -173,28 +181,88 @@ void vTaskNetworking(void *pvParameters) {
                 } else {
                     mqttClient.loop();
 
-                    ProductionEvent event;
-                    // Dequeue event and process
-                    if (xQueueReceive(productionEventQueue, &event, 0) == pdTRUE) {
-                        int64_t currentBootMs = esp_timer_get_time() / 1000;
-                        int64_t timeDifferenceMs = currentBootMs - event.timestamp;
-                        time_t eventEpochSec = time(nullptr) - (timeDifferenceMs / 1000);
-
-                        struct tm timeinfo;
-                        gmtime_r(&eventEpochSec, &timeinfo);
-                        char isoTimestamp[25];
-                        strftime(isoTimestamp, sizeof(isoTimestamp), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
-
-                        String payload = serializePayload(event.cycleCount, isoTimestamp);
-                        const char* topic = "novamex/ibarra/production/norvi_001";
-                        if (mqttClient.publish(topic, payload.c_str(), true)) {
-                            Serial.printf("[Networking] Published event: cycleCount=%u, timestamp=%s\n", event.cycleCount, isoTimestamp);
+                    bool isSpoolPending = false;
+                    if (LittleFS.exists("/spool.dat")) {
+                        isSpoolPending = true;
+                        File spoolFile = LittleFS.open("/spool.dat", "r");
+                        if (spoolFile) {
+                            int count = 0;
+                            while (spoolFile.available() > 0 && count < 10) {
+                                SpooledEvent se;
+                                if (spoolFile.read((uint8_t*)&se, sizeof(SpooledEvent)) == sizeof(SpooledEvent)) {
+                                    struct tm timeinfo;
+                                    gmtime_r(&se.epochTime, &timeinfo);
+                                    char isoTimestamp[25];
+                                    strftime(isoTimestamp, sizeof(isoTimestamp), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+                                    String payload = serializePayload(se.cycleCount, isoTimestamp);
+                                    const char* topic = "novamex/ibarra/production/norvi_001";
+                                    mqttClient.publish(topic, payload.c_str(), true);
+                                    count++;
+                                } else {
+                                    break;
+                                }
+                            }
+                            if (spoolFile.available() == 0) {
+                                spoolFile.close();
+                                LittleFS.remove("/spool.dat");
+                                isSpoolPending = false;
+                                Serial.println("[Networking] Spool fully flushed.");
+                            } else {
+                                spoolFile.close();
+                            }
+                            if (count > 0) {
+                                vTaskDelay(pdMS_TO_TICKS(50));
+                            }
                         } else {
-                            Serial.println("[Networking] Failed to publish event!");
+                            isSpoolPending = false;
+                        }
+                    }
+
+                    if (!isSpoolPending) {
+                        ProductionEvent event;
+                        // Dequeue event and process
+                        if (xQueueReceive(productionEventQueue, &event, 0) == pdTRUE) {
+                            int64_t currentBootMs = esp_timer_get_time() / 1000;
+                            int64_t timeDifferenceMs = currentBootMs - event.timestamp;
+                            time_t eventEpochSec = time(nullptr) - (timeDifferenceMs / 1000);
+
+                            struct tm timeinfo;
+                            gmtime_r(&eventEpochSec, &timeinfo);
+                            char isoTimestamp[25];
+                            strftime(isoTimestamp, sizeof(isoTimestamp), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+
+                            String payload = serializePayload(event.cycleCount, isoTimestamp);
+                            const char* topic = "novamex/ibarra/production/norvi_001";
+                            if (mqttClient.publish(topic, payload.c_str(), true)) {
+                                Serial.printf("[Networking] Published event: cycleCount=%u, timestamp=%s\n", event.cycleCount, isoTimestamp);
+                            } else {
+                                Serial.println("[Networking] Failed to publish event!");
+                            }
                         }
                     }
                 }
                 break;
+            }
+        }
+
+        if (currentState != STATE_CONNECTED) {
+            ProductionEvent event;
+            if (xQueueReceive(productionEventQueue, &event, 0) == pdTRUE) {
+                if (ntpSynced) {
+                    int64_t currentBootMs = esp_timer_get_time() / 1000;
+                    int64_t timeDifferenceMs = currentBootMs - event.timestamp;
+                    time_t eventEpochSec = time(nullptr) - (timeDifferenceMs / 1000);
+
+                    File spoolFile = LittleFS.open("/spool.dat", "a");
+                    if (spoolFile) {
+                        SpooledEvent se;
+                        se.cycleCount = event.cycleCount;
+                        se.epochTime = eventEpochSec;
+                        spoolFile.write((uint8_t*)&se, sizeof(SpooledEvent));
+                        spoolFile.close();
+                        Serial.printf("[Networking] Spooled event offline: cycleCount=%u\n", se.cycleCount);
+                    }
+                }
             }
         }
 
@@ -229,6 +297,10 @@ void setup() {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
     Serial.println("[System] Initializing Norvi Concurrent Monitor...");
+
+    if (!LittleFS.begin(true)) {
+        Serial.println("LittleFS Mount Failed");
+    }
 
     // Initialize I2C Wire on GPIO 21 (SDA) and GPIO 22 (SCL)
     Wire.begin(21, 22);
