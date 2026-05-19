@@ -1,0 +1,18 @@
+table:
+  name: telemetry_events
+  schema: telemetry
+select_permissions:
+  - role: operator
+    permission:
+      columns:
+        - id
+        - enterprise
+        - site
+        - area
+        - device_id
+        - timestamp
+        - health
+        - metrics
+      filter:
+        site:
+          _eq: X-Hasura-Site
