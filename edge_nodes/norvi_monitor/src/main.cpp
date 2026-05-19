@@ -9,6 +9,9 @@
 #include "PayloadSerializer.h"
 #include <time.h>
 #include <LittleFS.h>
+#include <esp_task_wdt.h>
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
 
 
 #ifndef INPUT_PIN
@@ -74,6 +77,7 @@ void IRAM_ATTR inputISR() {
 
 // Task Networking (pinned to Core 0)
 void vTaskNetworking(void *pvParameters) {
+    esp_task_wdt_add(NULL);
     ConnectionState currentState = STATE_DISCONNECTED;
     unsigned long lastWifiRetryMs = 0;
     unsigned long wifiConnectStartMs = 0;
@@ -83,6 +87,7 @@ void vTaskNetworking(void *pvParameters) {
     Serial.println("[Networking] Starting networking task on Core 0...");
 
     while (true) {
+        esp_task_wdt_reset();
         // If not in disconnected/connecting wifi states, verify WiFi status
         if (currentState != STATE_DISCONNECTED && currentState != STATE_CONNECTING_WIFI) {
             if (WiFi.status() != WL_CONNECTED) {
@@ -273,7 +278,9 @@ void vTaskNetworking(void *pvParameters) {
 
 // Task Application (pinned to Core 1)
 void vTaskApplication(void *pvParameters) {
+    esp_task_wdt_add(NULL);
     while (true) {
+        esp_task_wdt_reset();
         Serial.println("[Application] Active and processing logic...");
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
@@ -281,7 +288,9 @@ void vTaskApplication(void *pvParameters) {
 
 // Task Analog Acquisition (pinned to Core 1)
 void vTaskAnalog(void *pvParameters) {
+    esp_task_wdt_add(NULL);
     while (true) {
+        esp_task_wdt_reset();
         int16_t raw_adc = ads.readADC_SingleEnded(0);
         float volts = ads.computeVolts(raw_adc);
         float filtered_volts = emaFilter.filter(volts);
@@ -297,6 +306,13 @@ void setup() {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
     Serial.println("[System] Initializing Norvi Concurrent Monitor...");
+
+    // Extreme Brownout Detector (BOD) configuration (~2.80V)
+    // Overriding defaults using direct RTC system registers
+    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 1);
+
+    // Initialize TWDT with 5-second timeout and panic enabled
+    esp_task_wdt_init(5, true);
 
     if (!LittleFS.begin(true)) {
         Serial.println("LittleFS Mount Failed");
