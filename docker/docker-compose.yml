@@ -37,6 +37,20 @@ services:
       - edge-net
     restart: unless-stopped
 
+  system_monitor:
+    image: ghcr.io/chocolate-ibarra/gema-system-monitor:latest
+    build:
+      context: ../services/system_monitor
+    env_file: ../.env
+    volumes:
+      - /sys:/sys:ro
+      - /:/hostfs:ro
+    depends_on:
+      - mosquitto
+    networks:
+      - edge-net
+    restart: unless-stopped
+
   simulator:
     build:
       context: ../simulation
