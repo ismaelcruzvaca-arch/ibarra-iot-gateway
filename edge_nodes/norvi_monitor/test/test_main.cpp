@@ -1,4 +1,5 @@
 #include <unity.h>
+#include "../src/EMAFilter.h"
 
 struct ProductionEvent {
     uint32_t cycleCount;
@@ -36,6 +37,49 @@ void test_debounce_logic_block(void) {
     TEST_ASSERT_FALSE(check_debounce(0, 0, 50000));
 }
 
+void test_ema_initialization(void) {
+    EMAFilter filter(0.1f);
+    TEST_ASSERT_EQUAL_FLOAT(1234.5f, filter.filter(1234.5f));
+    TEST_ASSERT_EQUAL_FLOAT(1234.5f, filter.getValue());
+}
+
+void test_ema_step_update(void) {
+    EMAFilter filter(0.1f);
+    filter.filter(100.0f); // initialized to 100
+    TEST_ASSERT_EQUAL_FLOAT(110.0f, filter.filter(200.0f));
+}
+
+void test_ema_alpha_bounds(void) {
+    // Test alpha = 1.0 (no filtering)
+    EMAFilter filter1(1.0f);
+    TEST_ASSERT_EQUAL_FLOAT(150.0f, filter1.filter(150.0f));
+    TEST_ASSERT_EQUAL_FLOAT(250.0f, filter1.filter(250.0f));
+    TEST_ASSERT_EQUAL_FLOAT(350.0f, filter1.filter(350.0f));
+
+    // Test alpha = 0.0 (total filtering, constant output)
+    EMAFilter filter0(0.0f);
+    TEST_ASSERT_EQUAL_FLOAT(100.0f, filter0.filter(100.0f));
+    TEST_ASSERT_EQUAL_FLOAT(100.0f, filter0.filter(200.0f));
+    TEST_ASSERT_EQUAL_FLOAT(100.0f, filter0.filter(300.0f));
+}
+
+void test_ema_convergence(void) {
+    EMAFilter filter(0.1f);
+    filter.filter(0.0f); // initialized to 0.0
+    for (int i = 0; i < 100; i++) {
+        filter.filter(100.0f);
+    }
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 100.0f, filter.getValue());
+}
+
+void test_ema_reset(void) {
+    EMAFilter filter(0.1f);
+    filter.filter(150.0f);
+    filter.filter(200.0f);
+    filter.reset();
+    TEST_ASSERT_EQUAL_FLOAT(50.0f, filter.filter(50.0f));
+}
+
 #ifdef ARDUINO
 #include <Arduino.h>
 void setup() {
@@ -43,6 +87,11 @@ void setup() {
     RUN_TEST(test_production_event_struct_members);
     RUN_TEST(test_debounce_logic_pass);
     RUN_TEST(test_debounce_logic_block);
+    RUN_TEST(test_ema_initialization);
+    RUN_TEST(test_ema_step_update);
+    RUN_TEST(test_ema_alpha_bounds);
+    RUN_TEST(test_ema_convergence);
+    RUN_TEST(test_ema_reset);
     UNITY_END();
 }
 
@@ -55,6 +104,12 @@ int main(int argc, char **argv) {
     RUN_TEST(test_production_event_struct_members);
     RUN_TEST(test_debounce_logic_pass);
     RUN_TEST(test_debounce_logic_block);
+    RUN_TEST(test_ema_initialization);
+    RUN_TEST(test_ema_step_update);
+    RUN_TEST(test_ema_alpha_bounds);
+    RUN_TEST(test_ema_convergence);
+    RUN_TEST(test_ema_reset);
     return UNITY_END();
 }
 #endif
+
