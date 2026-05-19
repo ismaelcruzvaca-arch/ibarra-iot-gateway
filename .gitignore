@@ -1,3 +1,4 @@
 node_modules/
 *.log
 .env
+edge_nodes/norvi_monitor/include/secrets.h

@@ -2,6 +2,13 @@
 #include <Wire.h>
 #include <Adafruit_ADS1X15.h>
 #include "EMAFilter.h"
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
+#include "include/secrets.h"
+#include "PayloadSerializer.h"
+#include <time.h>
+
 
 #ifndef INPUT_PIN
 #define INPUT_PIN 18
@@ -24,6 +31,19 @@ volatile uint32_t globalCycleCount = 0;
 // Global ADC and EMA Filter
 Adafruit_ADS1115 ads;
 EMAFilter emaFilter(0.1f);
+
+// Connection State Machine Definition
+enum ConnectionState {
+    STATE_DISCONNECTED,
+    STATE_CONNECTING_WIFI,
+    STATE_SYNCING_TIME,
+    STATE_CONNECTING_MQTT,
+    STATE_CONNECTED
+};
+
+WiFiClientSecure espClient;
+PubSubClient mqttClient(espClient);
+
 
 // ISR decorated with IRAM_ATTR
 void IRAM_ATTR inputISR() {
@@ -48,15 +68,140 @@ void IRAM_ATTR inputISR() {
 
 // Task Networking (pinned to Core 0)
 void vTaskNetworking(void *pvParameters) {
-    ProductionEvent event;
+    ConnectionState currentState = STATE_DISCONNECTED;
+    unsigned long lastWifiRetryMs = 0;
+    unsigned long wifiConnectStartMs = 0;
+    unsigned long lastMqttRetryMs = 0;
+
+    Serial.println("[Networking] Starting networking task on Core 0...");
+
     while (true) {
-        if (xQueueReceive(productionEventQueue, &event, portMAX_DELAY) == pdTRUE) {
-            Serial.printf("[Networking] Dequeued event: Pin ID: %u, Cycle Count: %u, Timestamp: %lu ms\n",
-                          event.pinId, event.cycleCount, event.timestamp);
+        // If not in disconnected/connecting wifi states, verify WiFi status
+        if (currentState != STATE_DISCONNECTED && currentState != STATE_CONNECTING_WIFI) {
+            if (WiFi.status() != WL_CONNECTED) {
+                Serial.println("[Networking] Wi-Fi connection lost!");
+                currentState = STATE_DISCONNECTED;
+                lastWifiRetryMs = millis();
+            }
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
+
+        switch (currentState) {
+            case STATE_DISCONNECTED: {
+                if (lastWifiRetryMs == 0 || (millis() - lastWifiRetryMs >= 5000)) {
+                    Serial.println("[Networking] Initiating Wi-Fi connection...");
+                    WiFi.disconnect(true);
+                    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+                    wifiConnectStartMs = millis();
+                    lastWifiRetryMs = millis();
+                    currentState = STATE_CONNECTING_WIFI;
+                }
+                break;
+            }
+
+            case STATE_CONNECTING_WIFI: {
+                if (WiFi.status() == WL_CONNECTED) {
+                    Serial.println("[Networking] Wi-Fi connected. Synchronizing time via NTP...");
+                    configTime(0, 0, "pool.ntp.org");
+                    currentState = STATE_SYNCING_TIME;
+                } else if (millis() - wifiConnectStartMs >= 15000) {
+                    Serial.println("[Networking] Wi-Fi connection timeout. Retrying...");
+                    WiFi.disconnect(true);
+                    currentState = STATE_DISCONNECTED;
+                    lastWifiRetryMs = millis();
+                }
+                break;
+            }
+
+            case STATE_SYNCING_TIME: {
+                Serial.println("[Networking] Waiting for NTP sync...");
+                time_t now = time(nullptr);
+                struct tm timeinfo;
+                gmtime_r(&now, &timeinfo);
+                while (timeinfo.tm_year + 1900 <= 2024) {
+                    if (WiFi.status() != WL_CONNECTED) {
+                        break;
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    now = time(nullptr);
+                    gmtime_r(&now, &timeinfo);
+                }
+
+                if (WiFi.status() == WL_CONNECTED) {
+                    Serial.println("[Networking] NTP synchronized. Setting client certificates...");
+                    espClient.setCACert(CA_CERT);
+                    espClient.setCertificate(CLIENT_CERT);
+                    espClient.setPrivateKey(CLIENT_KEY);
+                    mqttClient.setServer(MQTT_BROKER_IP, 8883);
+                    lastMqttRetryMs = 0; // Try connecting immediately
+                    currentState = STATE_CONNECTING_MQTT;
+                } else {
+                    currentState = STATE_DISCONNECTED;
+                    lastWifiRetryMs = millis();
+                }
+                break;
+            }
+
+            case STATE_CONNECTING_MQTT: {
+                if (lastMqttRetryMs == 0 || (millis() - lastMqttRetryMs >= 5000)) {
+                    lastMqttRetryMs = millis();
+                    Serial.println("[Networking] Attempting MQTTS connection...");
+                    const char* clientId = "norvi_001";
+                    const char* lwtTopic = "novamex/ibarra/production/norvi_001";
+                    const char* lwtPayload = "{\"node_health\":\"OFFLINE\",\"metrics\":[]}";
+                    if (mqttClient.connect(clientId, lwtTopic, 1, true, lwtPayload)) {
+                        Serial.println("[Networking] MQTTS connected. Publishing initial ONLINE status...");
+                        time_t now = time(nullptr);
+                        struct tm timeinfo;
+                        gmtime_r(&now, &timeinfo);
+                        char isoTimestamp[25];
+                        strftime(isoTimestamp, sizeof(isoTimestamp), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+                        String payload = serializePayload(globalCycleCount, isoTimestamp);
+                        mqttClient.publish(lwtTopic, payload.c_str(), true);
+                        currentState = STATE_CONNECTED;
+                    } else {
+                        Serial.printf("[Networking] MQTTS connection failed, rc=%d. Will retry...\n", mqttClient.state());
+                    }
+                }
+                break;
+            }
+
+            case STATE_CONNECTED: {
+                if (!mqttClient.connected()) {
+                    Serial.println("[Networking] MQTTS connection lost!");
+                    currentState = STATE_CONNECTING_MQTT;
+                    lastMqttRetryMs = millis();
+                } else {
+                    mqttClient.loop();
+
+                    ProductionEvent event;
+                    // Dequeue event and process
+                    if (xQueueReceive(productionEventQueue, &event, 0) == pdTRUE) {
+                        int64_t currentBootMs = esp_timer_get_time() / 1000;
+                        int64_t timeDifferenceMs = currentBootMs - event.timestamp;
+                        time_t eventEpochSec = time(nullptr) - (timeDifferenceMs / 1000);
+
+                        struct tm timeinfo;
+                        gmtime_r(&eventEpochSec, &timeinfo);
+                        char isoTimestamp[25];
+                        strftime(isoTimestamp, sizeof(isoTimestamp), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+
+                        String payload = serializePayload(event.cycleCount, isoTimestamp);
+                        const char* topic = "novamex/ibarra/production/norvi_001";
+                        if (mqttClient.publish(topic, payload.c_str(), true)) {
+                            Serial.printf("[Networking] Published event: cycleCount=%u, timestamp=%s\n", event.cycleCount, isoTimestamp);
+                        } else {
+                            Serial.println("[Networking] Failed to publish event!");
+                        }
+                    }
+                }
+                break;
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
+
 
 // Task Application (pinned to Core 1)
 void vTaskApplication(void *pvParameters) {
@@ -115,7 +260,7 @@ void setup() {
     xTaskCreatePinnedToCore(
         vTaskNetworking,
         "vTaskNetworking",
-        4096,
+        8192,
         NULL,
         1,
         NULL,

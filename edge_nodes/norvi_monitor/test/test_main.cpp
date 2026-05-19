@@ -1,5 +1,7 @@
 #include <unity.h>
 #include "../src/EMAFilter.h"
+#include "../src/PayloadSerializer.h"
+
 
 struct ProductionEvent {
     uint32_t cycleCount;
@@ -80,6 +82,23 @@ void test_ema_reset(void) {
     TEST_ASSERT_EQUAL_FLOAT(50.0f, filter.filter(50.0f));
 }
 
+void test_payload_serialization_structure(void) {
+#ifdef ARDUINO
+    String outputJson = serializePayload(42, "2026-05-19T21:20:00Z");
+#else
+    std::string outputJson = serializePayload(42, "2026-05-19T21:20:00Z");
+#endif
+
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, outputJson);
+    TEST_ASSERT_TRUE(err == DeserializationError::Ok);
+    TEST_ASSERT_EQUAL_STRING("ONLINE", doc["node_health"].as<const char*>());
+    TEST_ASSERT_EQUAL_INT(42, doc["metrics"][0]["value"].as<int>());
+    TEST_ASSERT_EQUAL_STRING("production_cycle", doc["metrics"][0]["name"].as<const char*>());
+    TEST_ASSERT_EQUAL_STRING("2026-05-19T21:20:00Z", doc["metrics"][0]["timestamp"].as<const char*>());
+}
+
+
 #ifdef ARDUINO
 #include <Arduino.h>
 void setup() {
@@ -92,6 +111,7 @@ void setup() {
     RUN_TEST(test_ema_alpha_bounds);
     RUN_TEST(test_ema_convergence);
     RUN_TEST(test_ema_reset);
+    RUN_TEST(test_payload_serialization_structure);
     UNITY_END();
 }
 
@@ -109,6 +129,7 @@ int main(int argc, char **argv) {
     RUN_TEST(test_ema_alpha_bounds);
     RUN_TEST(test_ema_convergence);
     RUN_TEST(test_ema_reset);
+    RUN_TEST(test_payload_serialization_structure);
     return UNITY_END();
 }
 #endif
