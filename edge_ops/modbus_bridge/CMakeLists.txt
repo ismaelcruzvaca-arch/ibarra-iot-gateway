@@ -19,7 +19,7 @@ if(CROSSCOMPILE)
     # Production static library
     add_library(modbus_bridge_lib STATIC
         ${PROTO_SRCS}
-        # src/ files will be added here as the module grows
+        src/ModbusRTUMaster.cpp
     )
     target_include_directories(modbus_bridge_lib PUBLIC
         ${CMAKE_CURRENT_BINARY_DIR}
@@ -33,10 +33,13 @@ else()
     add_executable(test_runner
         ${PROTO_SRCS}
         tests/test_protobuf_contract.cpp
+        tests/test_modbus_engine.cpp
+        src/ModbusRTUMaster.cpp
         tests/catch2/catch_amalgamated.cpp
     )
     target_include_directories(test_runner PRIVATE
         ${CMAKE_CURRENT_BINARY_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/tests
     )
     target_link_libraries(test_runner PRIVATE protobuf::libprotobuf)
