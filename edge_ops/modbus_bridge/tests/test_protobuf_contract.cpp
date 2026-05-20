@@ -3,14 +3,14 @@
 // ============================================================================
 //
 // All tests operate on proto3 serialization semantics:
-//   - OperatingStatus enum roundtrip (all 6 values + unknown=99)
-//   - NorviState roundtrip and default values
+//   - OperatingStatus enum roundtrip (all 3 values + unknown=99)
+//   - ModbusNodeState roundtrip and default values
 //   - ModbusBridgePayload multi-node, empty, and insertion order
 //   - HardwareHealthPayload roundtrip, defaults, large uint64
 //   - Cross-message binary isolation
 //
 // Requires: protoc-generated telemetry.pb.h (from telemetry.proto)
-// Build:    See tasks.md Phase 2 for manual build command
+// Build:    docker run via build_in_docker.sh host
 // ============================================================================
 
 #include "catch2/catch_amalgamated.hpp"
@@ -20,7 +20,7 @@
 #include <vector>
 
 using ibarra::telemetry::OperatingStatus;
-using ibarra::telemetry::NorviState;
+using ibarra::telemetry::ModbusNodeState;
 using ibarra::telemetry::ModbusBridgePayload;
 using ibarra::telemetry::HardwareHealthPayload;
 
@@ -40,9 +40,9 @@ static std::string serialize_or_die(const M& msg) {
 // OperatingStatus Enum Tests
 // ============================================================================
 
-TEST_CASE("OperatingStatus enum roundtrip preserves all 6 defined values", "[enum]") {
-    // GIVEN a proto3 OperatingStatus enum with values 0 through 5
-    // WHEN each value is set on a NorviState, serialized, and deserialized
+TEST_CASE("OperatingStatus enum roundtrip preserves all 3 defined values", "[enum]") {
+    // GIVEN a proto3 OperatingStatus enum with values 0 through 2
+    // WHEN each value is set on a ModbusNodeState, serialized, and deserialized
     // THEN the deserialized enum value MUST equal the original
 
     struct TestCase {
@@ -51,52 +51,49 @@ TEST_CASE("OperatingStatus enum roundtrip preserves all 6 defined values", "[enu
     };
 
     const std::vector<TestCase> cases = {
-        { OperatingStatus::UNKNOWN,     0 },
-        { OperatingStatus::STARTING,    1 },
-        { OperatingStatus::RUNNING,     2 },
-        { OperatingStatus::FAULT,       3 },
-        { OperatingStatus::STOPPED,     4 },
-        { OperatingStatus::MAINTENANCE, 5 },
+        { OperatingStatus::STATUS_UNKNOWN, 0 },
+        { OperatingStatus::STATUS_OK,      1 },
+        { OperatingStatus::STATUS_FAULT,   2 },
     };
 
     for (const auto& tc : cases) {
-        NorviState original;
-        original.set_node_id("roundtrip_test");
+        ModbusNodeState original;
+        original.set_node_id(42);
         original.set_status(tc.status);
 
         std::string wire = serialize_or_die(original);
 
-        NorviState restored;
+        ModbusNodeState restored;
         REQUIRE(restored.ParseFromString(wire));
         REQUIRE(restored.status() == tc.status);
         REQUIRE(static_cast<int>(restored.status()) == tc.expected_numeric);
     }
 }
 
-TEST_CASE("OperatingStatus default value is UNKNOWN", "[enum][default]") {
-    // GIVEN a freshly constructed NorviState (no status assigned)
+TEST_CASE("OperatingStatus default value is STATUS_UNKNOWN", "[enum][default]") {
+    // GIVEN a freshly constructed ModbusNodeState (no status assigned)
     // WHEN the status field is read
-    // THEN it MUST be UNKNOWN (value 0)
-    NorviState state;
-    REQUIRE(state.status() == OperatingStatus::UNKNOWN);
+    // THEN it MUST be STATUS_UNKNOWN (value 0)
+    ModbusNodeState state;
+    REQUIRE(state.status() == OperatingStatus::STATUS_UNKNOWN);
     REQUIRE(static_cast<int>(state.status()) == 0);
 }
 
 TEST_CASE("OperatingStatus preserves unrecognized numeric value", "[enum][unknown]") {
-    // GIVEN a serialized NorviState with status=99 (not in enum)
+    // GIVEN a serialized ModbusNodeState with status=99 (not in enum)
     // WHEN deserialized
     // THEN the field MUST preserve the numeric value 99 without error
     //      (proto3 open-enum semantics)
 
-    NorviState original;
-    original.set_node_id("unknown_enum_test");
+    ModbusNodeState original;
+    original.set_node_id(7);
     original.set_cycle_count(7);
 
     // Serialize a message with an out-of-band status value.
     // Protobuf C++ API: we must write unknown fields at the wire level
-    // to test open-enum semantics. Serialize with status=MAINTENANCE(5),
+    // to test open-enum semantics. Serialize with status=STATUS_FAULT(2),
     // then manipulate the wire bytes to encode value 99 for field 3.
-    original.set_status(OperatingStatus::MAINTENANCE);
+    original.set_status(OperatingStatus::STATUS_FAULT);
 
     std::string wire = serialize_or_die(original);
 
@@ -105,19 +102,19 @@ TEST_CASE("OperatingStatus preserves unrecognized numeric value", "[enum][unknow
     // Field tag: (3 << 3) | 0 = 0x18 (24 decimal), followed by varint value.
     for (size_t i = 0; i < wire.size(); ++i) {
         if (static_cast<unsigned char>(wire[i]) == 0x18) {
-            // Next byte is the varint-encoded enum value (5 for MAINTENANCE)
-            if (i + 1 < wire.size() && static_cast<unsigned char>(wire[i + 1]) == 5) {
+            // Next byte is the varint-encoded enum value (2 for STATUS_FAULT)
+            if (i + 1 < wire.size() && static_cast<unsigned char>(wire[i + 1]) == 2) {
                 wire[i + 1] = static_cast<char>(99);
                 break;
             }
         }
     }
 
-    NorviState restored;
+    ModbusNodeState restored;
     REQUIRE(restored.ParseFromString(wire));
 
     // In proto3, unknown enum values are stored in the unknown field set.
-    // The status() getter returns the default (UNKNOWN=0) when the wire value
+    // The status() getter returns the default (STATUS_UNKNOWN=0) when the wire value
     // is not in the enum, but the numeric value is preserved.
     // We verify the roundtrip preserves the info by re-serializing and
     // checking the unknown field persists.
@@ -137,41 +134,41 @@ TEST_CASE("OperatingStatus preserves unrecognized numeric value", "[enum][unknow
 }
 
 // ============================================================================
-// NorviState Message Tests
+// ModbusNodeState Message Tests
 // ============================================================================
 
-TEST_CASE("NorviState serialization roundtrip", "[norvi]") {
-    // GIVEN a NorviState with node_id="norvi_001", cycle_count=42, status=RUNNING
+TEST_CASE("ModbusNodeState serialization roundtrip", "[node]") {
+    // GIVEN a ModbusNodeState with node_id=1, cycle_count=42, status=STATUS_OK
     // WHEN serialized and deserialized
     // THEN all three fields match original values
-    NorviState original;
-    original.set_node_id("norvi_001");
+    ModbusNodeState original;
+    original.set_node_id(1);
     original.set_cycle_count(42);
-    original.set_status(OperatingStatus::RUNNING);
+    original.set_status(OperatingStatus::STATUS_OK);
 
     std::string wire = serialize_or_die(original);
 
-    NorviState restored;
+    ModbusNodeState restored;
     REQUIRE(restored.ParseFromString(wire));
-    REQUIRE(restored.node_id()   == "norvi_001");
+    REQUIRE(restored.node_id()     == 1);
     REQUIRE(restored.cycle_count() == 42);
-    REQUIRE(restored.status()    == OperatingStatus::RUNNING);
+    REQUIRE(restored.status()      == OperatingStatus::STATUS_OK);
 }
 
-TEST_CASE("NorviState default values (proto3 zero-value defaults)", "[norvi][default]") {
-    // GIVEN a NorviState with only node_id="norvi_002" set
+TEST_CASE("ModbusNodeState default values (proto3 zero-value defaults)", "[node][default]") {
+    // GIVEN a ModbusNodeState with only node_id=2 set
     // WHEN serialized and deserialized
-    // THEN cycle_count MUST be 0 and status MUST be UNKNOWN
-    NorviState original;
-    original.set_node_id("norvi_002");
+    // THEN cycle_count MUST be 0 and status MUST be STATUS_UNKNOWN
+    ModbusNodeState original;
+    original.set_node_id(2);
 
     std::string wire = serialize_or_die(original);
 
-    NorviState restored;
+    ModbusNodeState restored;
     REQUIRE(restored.ParseFromString(wire));
-    REQUIRE(restored.node_id()     == "norvi_002");
+    REQUIRE(restored.node_id()     == 2);
     REQUIRE(restored.cycle_count() == 0);
-    REQUIRE(restored.status()      == OperatingStatus::UNKNOWN);
+    REQUIRE(restored.status()      == OperatingStatus::STATUS_UNKNOWN);
 }
 
 // ============================================================================
@@ -179,25 +176,25 @@ TEST_CASE("NorviState default values (proto3 zero-value defaults)", "[norvi][def
 // ============================================================================
 
 TEST_CASE("ModbusBridgePayload multi-node roundtrip", "[payload]") {
-    // GIVEN a ModbusBridgePayload with 3 NorviState entries
+    // GIVEN a ModbusBridgePayload with 3 ModbusNodeState entries
     // WHEN serialized and deserialized
     // THEN nodes repeated field contains exactly 3 entries with matching IDs
     ModbusBridgePayload original;
 
     auto* n1 = original.add_nodes();
-    n1->set_node_id("norvi_a");
+    n1->set_node_id(101);
     n1->set_cycle_count(10);
-    n1->set_status(OperatingStatus::RUNNING);
+    n1->set_status(OperatingStatus::STATUS_OK);
 
     auto* n2 = original.add_nodes();
-    n2->set_node_id("norvi_b");
+    n2->set_node_id(102);
     n2->set_cycle_count(20);
-    n2->set_status(OperatingStatus::STARTING);
+    n2->set_status(OperatingStatus::STATUS_OK);
 
     auto* n3 = original.add_nodes();
-    n3->set_node_id("norvi_c");
+    n3->set_node_id(103);
     n3->set_cycle_count(30);
-    n3->set_status(OperatingStatus::FAULT);
+    n3->set_status(OperatingStatus::STATUS_FAULT);
 
     std::string wire = serialize_or_die(original);
 
@@ -205,17 +202,17 @@ TEST_CASE("ModbusBridgePayload multi-node roundtrip", "[payload]") {
     REQUIRE(restored.ParseFromString(wire));
     REQUIRE(restored.nodes_size() == 3);
 
-    REQUIRE(restored.nodes(0).node_id()     == "norvi_a");
+    REQUIRE(restored.nodes(0).node_id()     == 101);
     REQUIRE(restored.nodes(0).cycle_count() == 10);
-    REQUIRE(restored.nodes(0).status()      == OperatingStatus::RUNNING);
+    REQUIRE(restored.nodes(0).status()      == OperatingStatus::STATUS_OK);
 
-    REQUIRE(restored.nodes(1).node_id()     == "norvi_b");
+    REQUIRE(restored.nodes(1).node_id()     == 102);
     REQUIRE(restored.nodes(1).cycle_count() == 20);
-    REQUIRE(restored.nodes(1).status()      == OperatingStatus::STARTING);
+    REQUIRE(restored.nodes(1).status()      == OperatingStatus::STATUS_OK);
 
-    REQUIRE(restored.nodes(2).node_id()     == "norvi_c");
+    REQUIRE(restored.nodes(2).node_id()     == 103);
     REQUIRE(restored.nodes(2).cycle_count() == 30);
-    REQUIRE(restored.nodes(2).status()      == OperatingStatus::FAULT);
+    REQUIRE(restored.nodes(2).status()      == OperatingStatus::STATUS_FAULT);
 }
 
 TEST_CASE("ModbusBridgePayload empty payload roundtrip", "[payload][empty]") {
@@ -233,19 +230,19 @@ TEST_CASE("ModbusBridgePayload empty payload roundtrip", "[payload][empty]") {
 }
 
 TEST_CASE("ModbusBridgePayload preserves insertion order", "[payload][order]") {
-    // GIVEN nodes added in order "norvi_003", "norvi_001", "norvi_002"
+    // GIVEN nodes added with node_id order 3, 1, 2
     // WHEN serialized and deserialized
     // THEN iterating nodes yields same insertion order
     ModbusBridgePayload original;
 
     auto* n1 = original.add_nodes();
-    n1->set_node_id("norvi_003");
+    n1->set_node_id(3);
 
     auto* n2 = original.add_nodes();
-    n2->set_node_id("norvi_001");
+    n2->set_node_id(1);
 
     auto* n3 = original.add_nodes();
-    n3->set_node_id("norvi_002");
+    n3->set_node_id(2);
 
     REQUIRE(original.nodes_size() == 3);
 
@@ -255,9 +252,9 @@ TEST_CASE("ModbusBridgePayload preserves insertion order", "[payload][order]") {
     REQUIRE(restored.ParseFromString(wire));
     REQUIRE(restored.nodes_size() == 3);
 
-    REQUIRE(restored.nodes(0).node_id() == "norvi_003");
-    REQUIRE(restored.nodes(1).node_id() == "norvi_001");
-    REQUIRE(restored.nodes(2).node_id() == "norvi_002");
+    REQUIRE(restored.nodes(0).node_id() == 3);
+    REQUIRE(restored.nodes(1).node_id() == 1);
+    REQUIRE(restored.nodes(2).node_id() == 2);
 }
 
 // ============================================================================
@@ -327,8 +324,8 @@ TEST_CASE("Cross-message binary isolation: independent serialization", "[isolati
 
     ModbusBridgePayload bridge;
     auto* node = bridge.add_nodes();
-    node->set_node_id("isolation_test");
-    node->set_status(OperatingStatus::RUNNING);
+    node->set_node_id(999);
+    node->set_status(OperatingStatus::STATUS_OK);
 
     HardwareHealthPayload health;
     health.set_cpu_temperature(60.0f);
@@ -341,8 +338,8 @@ TEST_CASE("Cross-message binary isolation: independent serialization", "[isolati
     ModbusBridgePayload bridge_restored;
     REQUIRE(bridge_restored.ParseFromString(bridge_wire));
     REQUIRE(bridge_restored.nodes_size() == 1);
-    REQUIRE(bridge_restored.nodes(0).node_id() == "isolation_test");
-    REQUIRE(bridge_restored.nodes(0).status()  == OperatingStatus::RUNNING);
+    REQUIRE(bridge_restored.nodes(0).node_id() == 999);
+    REQUIRE(bridge_restored.nodes(0).status()  == OperatingStatus::STATUS_OK);
 
     // Deserialize HardwareHealthPayload from its own bytes — must succeed
     HardwareHealthPayload health_restored;
