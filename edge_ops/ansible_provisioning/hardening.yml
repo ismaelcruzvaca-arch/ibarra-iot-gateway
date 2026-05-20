@@ -1,0 +1,62 @@
+---
+- name: Harden RPi5 Gateway — Watchdog y Gobernador de CPU
+  hosts: gateways
+  become: yes
+  vars:
+    watchdog_runtime_sec: "10s"
+    watchdog_shutdown_min: "10min"
+
+  tasks:
+    - name: Inyectar RuntimeWatchdogSec={{ watchdog_runtime_sec }} en systemd.conf
+      ansible.builtin.lineinfile:
+        path: /etc/systemd/system.conf
+        regexp: "^#?RuntimeWatchdogSec=.*"
+        line: "RuntimeWatchdogSec={{ watchdog_runtime_sec }}"
+        backup: yes
+
+    - name: Inyectar ShutdownWatchdogSec={{ watchdog_shutdown_min }} en systemd.conf
+      ansible.builtin.lineinfile:
+        path: /etc/systemd/system.conf
+        regexp: "^#?ShutdownWatchdogSec=.*"
+        line: "ShutdownWatchdogSec={{ watchdog_shutdown_min }}"
+        backup: yes
+
+    - name: Instalar cpu-performance.service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/cpu-performance.service
+        content: |
+          [Unit]
+          Description=Forzar gobernador de CPU a performance
+          After=multi-user.target
+
+          [Service]
+          Type=oneshot
+          ExecStart=/bin/sh -c 'echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor'
+          RemainAfterExit=yes
+
+          [Install]
+          WantedBy=multi-user.target
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Habilitar cpu-performance.service en el arranque
+      ansible.builtin.systemd:
+        name: cpu-performance.service
+        enabled: yes
+        state: started
+        daemon_reload: yes
+
+    - name: Verificar/instalar paquete overlayroot
+      ansible.builtin.apt:
+        name: overlayroot
+        state: present
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Inyectar overlayroot="tmpfs" en overlayroot.conf
+      ansible.builtin.lineinfile:
+        path: /etc/overlayroot.conf
+        regexp: '^#?overlayroot=.*'
+        line: 'overlayroot="tmpfs"'
+        backup: yes
