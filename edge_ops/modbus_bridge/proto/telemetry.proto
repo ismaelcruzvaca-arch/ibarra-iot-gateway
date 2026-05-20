@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package ibarra.telemetry;
+
+// Operating status of a Modbus edge node.
+enum OperatingStatus {
+  STATUS_UNKNOWN = 0;
+  STATUS_OK      = 1;
+  STATUS_FAULT   = 2;
+}
+
+// State snapshot for a single Modbus edge node.
+message ModbusNodeState {
+  uint32          node_id     = 1;
+  uint32          cycle_count = 2;
+  OperatingStatus status      = 3;
+}
+
+// Payload sent from the Modbus bridge containing multiple node states.
+message ModbusBridgePayload {
+  repeated ModbusNodeState nodes = 1;
+}
+
+// Hardware health metrics from the RV1106 gateway itself.
+message HardwareHealthPayload {
+  float  cpu_temperature = 1;
+  uint64 ram_used_bytes   = 2;
+  float  system_load      = 3;
+}

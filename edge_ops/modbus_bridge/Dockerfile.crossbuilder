@@ -1,0 +1,13 @@
+FROM ubuntu:22.04
+
+LABEL description="Cross-builder for RV1106 Modbus Bridge (armhf/uClibc)"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake \
+    g++ \
+    g++-arm-linux-gnueabihf \
+    protobuf-compiler \
+    libprotobuf-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
