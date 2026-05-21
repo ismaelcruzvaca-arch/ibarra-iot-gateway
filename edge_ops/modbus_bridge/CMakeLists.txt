@@ -19,6 +19,7 @@ find_package(Protobuf REQUIRED)
 # ---- Library ------------------------------------------------------------
 add_library(modbus_bridge
     src/ModbusRTUMaster.cpp
+    src/TelemetryOrchestrator.cpp
 )
 
 target_include_directories(modbus_bridge
@@ -67,6 +68,7 @@ if(BUILD_TESTS)
     if(Catch2_FOUND)
         add_executable(modbus_bridge_test
             test/test_modbus.cpp
+            test/test_orchestrator.cpp
         )
         target_link_libraries(modbus_bridge_test
             PRIVATE

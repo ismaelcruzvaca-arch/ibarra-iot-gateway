@@ -24,6 +24,8 @@ using namespace modbus_bridge;
 // the next chunk from a deque of canned responses.
 // =========================================================================
 
+namespace {
+
 class MockSerialPort : public ISerialPort {
 public:
     // ---- ISerialPort interface -----------------------------------------
@@ -72,6 +74,8 @@ private:
     std::vector<std::uint8_t>              last_tx_;
     std::deque<std::vector<std::uint8_t>>  responses_;
 };
+
+}  // anonymous namespace
 
 // =========================================================================
 // CRC-16 helper for test fixtures (independent of implementation)
