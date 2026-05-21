@@ -46,10 +46,11 @@ public:
 
     std::uint8_t code() const noexcept { return code_; }
 
+    /// Convert a byte to a 2-character hex string (e.g. 0x04 → "04").
+    static std::string to_hex(std::uint8_t v);
+
 private:
     std::uint8_t code_;
-
-    static std::string to_hex(std::uint8_t v);
 };
 
 // ---------------------------------------------------------------------------

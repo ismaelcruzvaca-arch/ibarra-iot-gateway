@@ -36,15 +36,3 @@ RUN mkdir -p /usr/local/arm-rockchip830-linux-uclibcgnueabihf/bin
 # Workspace
 # ------------------------------------------------------------------
 WORKDIR /workspace
-
-# Copy source tree
-COPY . .
-
-# ------------------------------------------------------------------
-# Build
-# ------------------------------------------------------------------
-RUN mkdir -p build && cd build && \
-    cmake .. \
-      -DCMAKE_TOOLCHAIN_FILE=../cmake/rv1106_toolchain.cmake \
-      -DPROTOBUF_PROTOC_EXECUTABLE=/usr/bin/protoc && \
-    make -j$(nproc)

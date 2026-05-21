@@ -1,13 +1,12 @@
-# ---------------------------------------------------------------------------
-# Catch2 unit tests for ModbusRTUMaster
+// ---------------------------------------------------------------------------
+// Catch2 unit tests for ModbusRTUMaster
 //
-# Uses MockSerialPort to simulate NORVI device behaviour without real
-# hardware.  Tests cover: happy-path, CRC mismatch, timeout, exception
-# response, and parameter validation.
-# ---------------------------------------------------------------------------
+// Uses MockSerialPort to simulate NORVI device behaviour without real
+// hardware.  Tests cover: happy-path, CRC mismatch, timeout, exception
+// response, and parameter validation.
+// ---------------------------------------------------------------------------
 
-#include <catch2/catch_test_macros.hpp>
-#include <catch2/matchers/catch_matchers_vector.hpp>
+#include <catch2/catch.hpp>
 
 #include "ModbusRTUMaster.hpp"
 
@@ -134,8 +133,7 @@ void append_crc(std::vector<std::uint8_t>& frame)
 // Tests
 // =========================================================================
 
-TEST_CASE("ModbusRTUMaster — read_input_registers, happy path 8 registers",
-          "[modbus][fc04]")
+TEST_CASE("Read 8 input registers — happy path", "[modbus][fc04]")
 {
     MockSerialPort mock;
     ModbusRTUMaster master(mock);
@@ -181,8 +179,7 @@ TEST_CASE("ModbusRTUMaster — read_input_registers, happy path 8 registers",
     CHECK(tx[5] == 0x08);            // count lo
 }
 
-TEST_CASE("ModbusRTUMaster — CRC mismatch throws ModbusCRCError",
-          "[modbus][crc]")
+TEST_CASE("CRC mismatch throws ModbusCRCError", "[modbus][crc]")
 {
     MockSerialPort mock;
     ModbusRTUMaster master(mock);
@@ -198,19 +195,17 @@ TEST_CASE("ModbusRTUMaster — CRC mismatch throws ModbusCRCError",
                     ModbusCRCError);
 }
 
-TEST_CASE("ModbusRTUMaster — timeout throws ModbusTimeout",
-          "[modbus][timeout]")
+TEST_CASE("Timeout throws ModbusTimeout", "[modbus][timeout]")
 {
     MockSerialPort mock;
     ModbusRTUMaster master(mock);
 
-    // No response configured → read() returns 0
+    // No response configured -> read() returns 0
     CHECK_THROWS_AS(master.read_input_registers(0x11, 0, 1),
                     ModbusTimeout);
 }
 
-TEST_CASE("ModbusRTUMaster — exception response 0x02 throws "
-          "ModbusExceptionResponse",
+TEST_CASE("Exception response 0x02 throws ModbusExceptionResponse",
           "[modbus][exception]")
 {
     MockSerialPort mock;
@@ -221,11 +216,11 @@ TEST_CASE("ModbusRTUMaster — exception response 0x02 throws "
     append_crc(resp);
     mock.set_next_response(resp);
 
-    CHECK_THROWS_AS(master.read_input_registers(0x11, 0, 1),
-                    ModbusExceptionResponse);
+    REQUIRE_THROWS_AS(master.read_input_registers(0x11, 0, 1),
+                      ModbusExceptionResponse);
 }
 
-TEST_CASE("ModbusRTUMaster — count out of range throws ModbusFrameError",
+TEST_CASE("Register count out of range throws ModbusFrameError",
           "[modbus][validation]")
 {
     MockSerialPort mock;
