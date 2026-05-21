@@ -1,0 +1,38 @@
+# ---------------------------------------------------------------------------
+# Cross-builder image for RV1106 Modbus Bridge
+# Base: Ubuntu 22.04 with cmake, protobuf, and ARM toolchain
+# ---------------------------------------------------------------------------
+
+FROM ubuntu:22.04 AS builder
+
+LABEL description="GEMA Modbus Bridge — RV1106 cross-build environment"
+
+# Prevent timezone prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ------------------------------------------------------------------
+# Host dependencies
+# ------------------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    g++ \
+    libprotobuf-dev \
+    protobuf-compiler \
+    ca-certificates \
+    wget \
+    xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# ------------------------------------------------------------------
+# ARM cross-compiler (Rockchip RV1106 — uclibc)
+# NOTE: In production this image should bundle or mount the actual
+#       arm-rockchip830-linux-uclibcgnueabihf toolchain.
+#       Here we create a stub so CMake can configure.
+# ------------------------------------------------------------------
+RUN mkdir -p /usr/local/arm-rockchip830-linux-uclibcgnueabihf/bin
+
+# ------------------------------------------------------------------
+# Workspace
+# ------------------------------------------------------------------
+WORKDIR /workspace
