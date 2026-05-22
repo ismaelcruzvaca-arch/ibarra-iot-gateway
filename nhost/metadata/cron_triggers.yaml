@@ -1,0 +1,38 @@
+# ============================================================================
+# Hasura Cron Triggers — Nhost metadata
+# ============================================================================
+#
+# This file manages all cron triggers for the project.
+# Add new cron triggers here following the standard Hasura metadata format.
+# ============================================================================
+
+- name: alert-healthbeat-cron
+  description: >
+    Runs every 5 minutes to inject a synthetic ALARM into norvi_telemetry
+    and verify end-to-end dispatch via the alert_engine_health table.
+  schedule: '*/5 * * * *'
+  webhook: '{{NHOST_BACKEND_URL}}/v1/functions/alert-healthbeat'
+  include_in_metadata: true
+  payload: {}
+  retry_conf:
+    num_retries: 0
+    timeout_sec: 60
+  headers:
+    - name: x-nhost-webhook-secret
+      value_from_env: NHOST_WEBHOOK_SECRET
+
+- name: silence-detector-cron
+  description: >
+    Runs every 1 minute to evaluate USER_DEFINED SILENCE_TIMEOUT rules
+    against norvi_telemetry data. When a machine exceeds its silence threshold,
+    inserts an event into alert_events for downstream dispatch.
+  schedule: '* * * * *'
+  webhook: '{{NHOST_BACKEND_URL}}/v1/functions/silence-detector'
+  include_in_metadata: true
+  payload: {}
+  retry_conf:
+    num_retries: 0
+    timeout_sec: 60
+  headers:
+    - name: x-nhost-webhook-secret
+      value_from_env: NHOST_WEBHOOK_SECRET

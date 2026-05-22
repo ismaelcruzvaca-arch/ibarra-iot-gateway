@@ -1,0 +1,54 @@
+# ============================================================================
+# Hasura Event Triggers — Nhost metadata
+# ============================================================================
+#
+# This file manages all event triggers for the project.
+# Add new triggers here following the standard Hasura metadata format.
+# ============================================================================
+
+- table:
+    schema: public
+    name: norvi_telemetry
+  event_triggers:
+    - name: alert_on_alarm
+      description: >
+        Fires on INSERT to norvi_telemetry where payload->>'status' = '3'
+        (ALARM). Invokes the alert-dispatcher Nhost Function for multi-channel
+        dispatch.
+      definition:
+        enable_manual: false
+        insert:
+          columns: '*'
+          filter:
+            payload:
+              status:
+                _eq: "3"
+      retry_conf:
+        num_retries: 3
+        interval_sec: 10
+        timeout_sec: 60
+      webhook: '{{NHOST_BACKEND_URL}}/v1/functions/alert-dispatcher'
+      headers:
+        - name: x-nhost-webhook-secret
+          value_from_env: NHOST_WEBHOOK_SECRET
+
+- table:
+    schema: public
+    name: alert_events
+  event_triggers:
+    - name: alert_on_silence_detected
+      description: >
+        Fires on INSERT to alert_events (created by silence-detector cron).
+        Invokes the alert-dispatcher to dispatch alerts via configured channels.
+      definition:
+        enable_manual: false
+        insert:
+          columns: '*'
+      retry_conf:
+        num_retries: 3
+        interval_sec: 10
+        timeout_sec: 60
+      webhook: '{{NHOST_BACKEND_URL}}/v1/functions/alert-dispatcher'
+      headers:
+        - name: x-nhost-webhook-secret
+          value_from_env: NHOST_WEBHOOK_SECRET
