@@ -1,0 +1,112 @@
+table:
+  schema: public
+  name: lines
+select_permissions:
+  - role: supervisor
+    permission:
+      filter:
+        plant_id:
+          _eq: x-hasura-plant-id
+      columns:
+        - id
+        - plant_id
+        - name
+        - code
+        - created_at
+        - updated_at
+      allow_aggregations: true
+  - role: maintenance
+    permission:
+      filter:
+        plant_id:
+          _eq: x-hasura-plant-id
+      columns:
+        - id
+        - plant_id
+        - name
+        - code
+        - created_at
+        - updated_at
+      allow_aggregations: true
+  - role: admin
+    permission:
+      filter: {}
+      columns:
+        - id
+        - plant_id
+        - name
+        - code
+        - created_at
+        - updated_at
+      allow_aggregations: true
+insert_permissions:
+  - role: supervisor
+    permission:
+      columns:
+        - plant_id
+        - name
+        - code
+      check:
+        plant_id:
+          _eq: x-hasura-plant-id
+  - role: maintenance
+    permission:
+      columns:
+        - plant_id
+        - name
+        - code
+      check:
+        plant_id:
+          _eq: x-hasura-plant-id
+  - role: admin
+    permission:
+      columns:
+        - plant_id
+        - name
+        - code
+      check: {}
+update_permissions:
+  - role: supervisor
+    permission:
+      columns:
+        - name
+        - code
+      filter:
+        plant_id:
+          _eq: x-hasura-plant-id
+      check:
+        plant_id:
+          _eq: x-hasura-plant-id
+  - role: maintenance
+    permission:
+      columns:
+        - name
+        - code
+      filter:
+        plant_id:
+          _eq: x-hasura-plant-id
+      check:
+        plant_id:
+          _eq: x-hasura-plant-id
+  - role: admin
+    permission:
+      columns:
+        - name
+        - code
+        - plant_id
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: supervisor
+    permission:
+      filter:
+        plant_id:
+          _eq: x-hasura-plant-id
+  - role: maintenance
+    permission:
+      filter:
+        plant_id:
+          _eq: x-hasura-plant-id
+  - role: admin
+    permission:
+      filter: {}

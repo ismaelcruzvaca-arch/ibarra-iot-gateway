@@ -1,0 +1,70 @@
+table:
+  schema: public
+  name: plants
+select_permissions:
+  - role: supervisor
+    permission:
+      filter:
+        id:
+          _eq: x-hasura-plant-id
+      columns:
+        - id
+        - name
+        - code
+        - location
+        - timezone
+        - created_at
+        - updated_at
+      allow_aggregations: true
+  - role: maintenance
+    permission:
+      filter:
+        id:
+          _eq: x-hasura-plant-id
+      columns:
+        - id
+        - name
+        - code
+        - location
+        - timezone
+        - created_at
+        - updated_at
+      allow_aggregations: true
+  - role: admin
+    permission:
+      filter: {}
+      columns:
+        - id
+        - name
+        - code
+        - location
+        - timezone
+        - created_at
+        - updated_at
+      allow_aggregations: true
+insert_permissions:
+  - role: admin
+    permission:
+      columns:
+        - id
+        - name
+        - code
+        - location
+        - timezone
+        - created_at
+        - updated_at
+      check: {}
+update_permissions:
+  - role: admin
+    permission:
+      columns:
+        - name
+        - code
+        - location
+        - timezone
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {}

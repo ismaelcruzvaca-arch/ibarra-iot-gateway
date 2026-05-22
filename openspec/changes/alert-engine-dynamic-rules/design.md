@@ -1,139 +1,106 @@
-# Design: Alert Engine — Dynamic Rule Engine (Fase 1)
+# Design: Alert Engine — Dynamic Rule Engine (Fase 2: Multi-Tenant + RLS)
 
 ## Technical Approach
-Event-driven decoupling: silence-detector (cron, 1min) detects USER_DEFINED SILENCE_TIMEOUT violations and writes to `alert_events`. The existing alert-dispatcher handles dispatch via a new Event Trigger on `alert_events`. No code duplication — adapters stay in `alert-dispatcher/adapters/`.
+Phase 2 extends the Dynamic Rule Engine with multi-tenant isolation via a physical hierarchy (plants → lines → machines), a hardware catalog, and Hasura RLS policies. The hierarchy tables mirror the existing structure in produccion-ibarra for future federation via Hasura Remote Schema.
 
 ## Architecture Decisions
 
-### AD-5: Event-Driven Decoupling
+### AD-8: Fresh Hierarchy Tables (Not Remote Schema)
 | Option | Tradeoff | Decision |
 |--------|----------|----------|
-| silence-detector sends messages directly | Tight coupling, duplicate adapter logic in two functions | ❌ |
-| **Event bridge via alert_events** | Decoupled: detector writes events, dispatcher handles dispatch. Single adapter registry. | ✅ |
-**Rationale**: The silence-detector should NOT know about channels, adapters, or dispatch. It only detects silence and records events. The existing alert-dispatcher (which already has the adapter registry) handles dispatch for both SYSTEM and USER_DEFINED sources via bifurcation on `payload.table.name`.
+| Use Hasura Remote Schema to reference produccion-ibarra tables | Tight coupling, dependency on external schema availability, no local control | ❌ |
+| **Create fresh hierarchy tables locally** | Independent, self-contained, can be federated later. Duplicates structure but not data. | ✅ |
+**Rationale**: This is a separate Nhost project. When federation is needed, Hasura Remote Schema will align the tables. For now, local tables keep the system fully self-contained.
 
-### AD-6: Bifurcation over Duplication
-Extending alert-dispatcher/index.ts to check `payload.table.name` and branch is simpler than creating a separate dispatch function. Zero new adapters, zero new dispatch logic.
-**Rationale**: The EVENT_DRIVEN decoupling means the dispatcher already has everything it needs. The bifurcation is a single if/else that routes to the correct rule-resolution path.
+### AD-9: Denormalized plant_id on alert_events
+| Option | Tradeoff | Decision |
+|--------|----------|----------|
+| Derive plant_id via rule_id → alert_rules → plant_id join | RLS would require subquery, less efficient, complex relationship chain | ❌ |
+| **Denormalize plant_id directly on alert_events** | Simple RLS filter, efficient queries. Requires application-level sync. | ✅ |
+**Rationale**: RLS on alert_events must be fast (millions of rows). A denormalized FK allows `plant_id: { _eq: x-hasura-plant-id }` — no joins, no subqueries. The silence-detector writes plant_id when inserting the event.
 
-### AD-7: Injected Functions for Testability
-SilenceDetectorEngine.evaluate() accepts 5 injected functions (same pattern as DispatcherEngine).
-**Rationale**: Consistent with existing codebase pattern. Enables unit testing without a live database.
+### AD-10: Relationship Traversal for machines and nodes RLS
+| Option | Tradeoff | Decision |
+|--------|----------|----------|
+| Denormalize plant_id on all hierarchy tables | Data redundancy, sync complexity | ❌ |
+| **Use Hasura relationship traversal** | Clean FK chain, no redundancy. Hasura RLS supports `line.plant_id` and `machine.line.plant_id` notation. | ✅ |
+**Rationale**: Hasura's RLS engine handles relationship traversal natively. Machines filter via `line.plant_id`, nodes via `machine.line.plant_id`. No denormalization needed.
+
+### AD-11: Three-Role Model (supervisor, maintenance, admin)
+| Option | Tradeoff | Decision |
+|--------|----------|----------|
+| Two roles (user, admin) | Too coarse — can't distinguish operational from config access | ❌ |
+| **Three roles** | Clean separation: supervisor (config), maintenance (read+operate), admin (full) | ✅ |
+**Rationale**: Matches real factory hierarchy. Maintenance can read and operate (insert/update) but not delete config. Supervisor has full CRUD on operational tables. Admin has no restrictions.
 
 ## Component Design
 
-### silence-detector (Nhost Function)
+### Hierarchy Data Model
 ```
-nhost/functions/silence-detector/
-├── index.ts    ← cron handler (1 min), wires default GraphQL implementations
-└── engine.ts   ← SilenceDetectorEngine: evaluate() with DI
-```
+plants (1) ──→ (N) lines (1) ──→ (N) machines (1) ──→ (N) nodes
+                                  │
+                                  └── device_models (M:M) alert_capabilities
+                                                  (via model_capabilities)
 
-**Flow**: Cron triggers every 1 min → `index.ts` calls `SilenceDetectorEngine.evaluate()` with production queries → For each rule:
-
-1. Query `SELECT MAX(event_ts) FROM norvi_telemetry WHERE node_id = rule.node_id`
-2. Calculate elapsed seconds: `now() - max_event_ts`
-3. If elapsed > `rule.valor_umbral` → silence timeout detected
-4. Check cooldown: `now() - rule.last_alerted_at > rule.cooldown_minutos * 60` (or if `last_alerted_at IS NULL`, allow)
-5. If both conditions met → INSERT into `alert_events` (rule_id, node_id, tipo_evento='SILENCE_TIMEOUT', mensaje, detected_at)
-6. UPDATE `alert_rules SET last_alerted_at = now() WHERE id = rule.id`
-7. Write health row to `alert_engine_health` with counts
-
-### alert-dispatcher Bifurcation
-
-```typescript
-// In the handler:
-const tableName = payload.table?.name || 'norvi_telemetry';
-
-if (tableName === 'alert_events') {
-  // BRANCH B: USER_DEFINED flow
-  // 1. Extract alert_event from payload
-  // 2. Query alert_rules WHERE id = event.rule_id
-  // 3. Read rule.canales (JSONB array of channel types)
-  // 4. For each channel type: query alert_channels WHERE type=X AND enabled=true
-  // 5. adapter.send(config, message)
-  // 6. UPDATE alert_events SET dispatched=true, dispatch_result=result
-} else {
-  // BRANCH A: norvi_telemetry flow (unchanged)
-}
+users ──→ user_plants ──→ plants (many-to-many with role)
 ```
 
-## Data Flow
+### RLS Policy Design
 
-```
-SILENCE TIMEOUT (cron every 1 min)
-        │
-        ▼
-silence-detector Nhost Function
-        │
-        ├─► Query USER_DEFINED SILENCE_TIMEOUT rules
-        │       │
-        │       ▼ (for each rule)
-        │   Query latest event_ts from norvi_telemetry
-        │       │
-        │       ├─► elapsed > valor_umbral AND cooldown passed
-        │       │       │
-        │       │       ▼
-        │       │   INSERT into alert_events
-        │       │   UPDATE alert_rules.last_alerted_at
-        │       │
-        │       └─► (no violation or cooldown active) → skip
-        │
-        └─► Write health row to alert_engine_health
+Each operational table gets a `plant_id` filter (either direct FK or relationship traversal):
 
-alert_events INSERT
-        │
-        ▼
-Hasura Event Trigger (alert_on_silence_detected)
-        │
-        ▼
-alert-dispatcher Nhost Function
-        │
-        ├─► BIFURCATE: table.name === 'alert_events'
-        │       │
-        │       ├─► Query alert_rules WHERE id = event.rule_id
-        │       │       │
-        │       │       ▼
-        │       │   Read rule.canales (e.g., ["telegram", "slack"])
-        │       │       │
-        │       │       ▼ (for each channel type)
-        │       │   Query alert_channels WHERE channel_type=X AND enabled=true
-        │       │       │
-        │       │       ▼
-        │       │   adapter.send(config, message) [with retry]
-        │       │
-        │       └─► UPDATE alert_events SET dispatched=true, dispatch_result=...
-        │
-        └─► (norvi_telemetry branch — unchanged)
+```yaml
+# Direct FK tables (lines, alert_rules, alert_events):
+filter:
+  plant_id:
+    _eq: x-hasura-plant-id
+
+# Relationship traversal (machines → lines):
+filter:
+  line:
+    plant_id:
+      _eq: x-hasura-plant-id
+
+# Deep traversal (nodes → machines → lines):
+filter:
+  machine:
+    line:
+      plant_id:
+        _eq: x-hasura-plant-id
 ```
 
 ## File Changes
 
 | File | Action | Description |
 |------|--------|-------------|
-| `nhost/migrations/default/alert_engine/up.sql` | MODIFY | Add ALTER alert_rules + CREATE alert_events at bottom |
-| `nhost/migrations/default/alert_engine/down.sql` | MODIFY | Add DROP alert_events + revert ALTER TABLE |
-| `nhost/functions/silence-detector/engine.ts` | CREATE | SilenceDetectorEngine class with evaluate() + DI |
-| `nhost/functions/silence-detector/index.ts` | CREATE | Cron handler with production GraphQL implementations |
-| `nhost/functions/alert-dispatcher/index.ts` | MODIFY | Bifurcate: handle norvi_telemetry AND alert_events |
-| `nhost/metadata/cron_triggers.yaml` | MODIFY | Add silence-detector-cron (every 1 min) |
-| `nhost/metadata/event_triggers.yaml` | MODIFY | Add alert_on_silence_detected on alert_events |
-| `edge_ops/modbus_bridge/tests/test_alert_engine.py` | MODIFY | Add 7 Phase 4 test classes (~50 tests) |
-| `openspec/changes/alert-engine-dynamic-rules/tasks.md` | CREATE | Phase 4 tasks |
-| `openspec/changes/alert-engine-dynamic-rules/spec.md` | CREATE | Dynamic rules delta spec |
-| `openspec/changes/alert-engine-dynamic-rules/design.md` | CREATE | Dynamic rules design |
+| `nhost/migrations/default/multi_tenant_core/up.sql` | CREATE | Full migration: 8 new tables, 2 ALTER TABLE, seed data |
+| `nhost/migrations/default/multi_tenant_core/down.sql` | CREATE | Reverses up.sql in dependency order |
+| `nhost/metadata/databases/default/tables/public_plants.yaml` | CREATE | RLS: supervisor SELECT by plant_id, admin ALL |
+| `nhost/metadata/databases/default/tables/public_lines.yaml` | CREATE | RLS: supervisor ALL filtered by plant_id |
+| `nhost/metadata/databases/default/tables/public_machines.yaml` | CREATE | RLS: via line relationship traversal |
+| `nhost/metadata/databases/default/tables/public_nodes.yaml` | CREATE | RLS: via machine→line relationship traversal |
+| `nhost/metadata/databases/default/tables/public_device_models.yaml` | CREATE | RLS: SELECT only (global catalog) |
+| `nhost/metadata/databases/default/tables/public_alert_capabilities.yaml` | CREATE | RLS: SELECT only (global catalog) |
+| `nhost/metadata/databases/default/tables/public_model_capabilities.yaml` | CREATE | RLS: SELECT only (global catalog) |
+| `nhost/metadata/databases/default/tables/public_alert_rules.yaml` | CREATE | RLS: supervisor/maintenance ALL by plant_id |
+| `nhost/metadata/databases/default/tables/public_alert_events.yaml` | CREATE | RLS: supervisor SELECT only by plant_id |
+| `nhost/metadata/databases/default/tables/public_user_plants.yaml` | CREATE | RLS: SELECT by user_id + plant_id |
+| `edge_ops/modbus_bridge/tests/test_alert_engine.py` | MODIFY | Add 4 test classes: TestMultiTenantMigration, TestHasuraMetadataFiles, TestMultiTenantIsolation, TestSeedData |
+| `openspec/changes/alert-engine-dynamic-rules/tasks.md` | MODIFY | Add Phase 5 tasks with [x] marks |
+| `openspec/changes/alert-engine-dynamic-rules/spec.md` | MODIFY | Delta spec for multi-tenant tables, RLS, seed data |
+| `openspec/changes/alert-engine-dynamic-rules/design.md` | MODIFY | Design decisions AD-8 through AD-11, hierarchy model, RLS design |
 
 ## Migration Plan
-- **Up**: ALTER alert_rules ADD COLUMNS (all IF NOT EXISTS), CREATE alert_events, CREATE indexes
-- **Down**: DROP alert_events indexes, DROP alert_events, ALTER alert_rules DROP COLUMNS
-- Existing SYSTEM rules are unaffected (default scope='SYSTEM')
+
+- **Up**: Create 8 new tables in dependency order, ALTER alert_rules ADD plant_id, ALTER alert_events ADD plant_id, seed INSERT with ON CONFLICT DO NOTHING
+- **Down**: Revert alert_events plant_id, revert alert_rules plant_id, DROP all 8 tables in reverse dependency order
+- **Idempotent**: All CREATE TABLE uses IF NOT EXISTS, all ALTER uses IF NOT EXISTS, seed uses ON CONFLICT DO NOTHING
 
 ## Testing Strategy
 
 | Layer | What | Approach |
 |-------|------|----------|
-| Migration V2 | New columns + alert_events table | Assert SQL content in up.sql and down.sql |
-| Silence Detector | Engine contract, interfaces, evaluate() signature | Assert TypeScript exports and method params |
-| Dispatcher Bifurcation | Both table.name branches, canales flow | Assert index.ts contains both paths |
-| Metadata | Cron + event trigger YAMLs | Assert YAML content for new entries |
-| Cooldown | Logic to prevent re-alerting | Assert engine.ts has cooldown_minutos comparison |
+| Multi-tenant migration | up.sql + down.sql content | Assert CREATE TABLE for all 8 tables, ALTER TABLE, seed INSERT, DROP in correct order |
+| Hasura metadata | 10 YAML files existence and content | Assert each file exists, contains supervisor role, references x-hasura-plant-id in filter |
+| RLS isolation | Filter assertions | Assert operational tables have plant_id filter, catalog tables are unfiltered, user_plants has user_id filter |
+| Seed data | 6 capability keys | Assert all 6 keys exist in INSERT with descriptions and ON CONFLICT |

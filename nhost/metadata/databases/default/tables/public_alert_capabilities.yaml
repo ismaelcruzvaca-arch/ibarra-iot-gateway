@@ -1,0 +1,49 @@
+table:
+  schema: public
+  name: alert_capabilities
+select_permissions:
+  - role: supervisor
+    permission:
+      filter: {}
+      columns:
+        - id
+        - capability_key
+        - description
+        - created_at
+      allow_aggregations: true
+  - role: maintenance
+    permission:
+      filter: {}
+      columns:
+        - id
+        - capability_key
+        - description
+        - created_at
+      allow_aggregations: true
+  - role: admin
+    permission:
+      filter: {}
+      columns:
+        - id
+        - capability_key
+        - description
+        - created_at
+      allow_aggregations: true
+insert_permissions:
+  - role: admin
+    permission:
+      columns:
+        - capability_key
+        - description
+      check: {}
+update_permissions:
+  - role: admin
+    permission:
+      columns:
+        - description
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {}

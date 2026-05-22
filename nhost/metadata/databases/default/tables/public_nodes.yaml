@@ -1,0 +1,106 @@
+table:
+  schema: public
+  name: nodes
+select_permissions:
+  - role: supervisor
+    permission:
+      filter:
+        machine:
+          line:
+            plant_id:
+              _eq: x-hasura-plant-id
+      columns:
+        - id
+        - machine_id
+        - device_model_id
+        - node_ident
+        - metadata
+        - created_at
+      allow_aggregations: true
+  - role: maintenance
+    permission:
+      filter:
+        machine:
+          line:
+            plant_id:
+              _eq: x-hasura-plant-id
+      columns:
+        - id
+        - machine_id
+        - device_model_id
+        - node_ident
+        - metadata
+        - created_at
+      allow_aggregations: true
+  - role: admin
+    permission:
+      filter: {}
+      columns:
+        - id
+        - machine_id
+        - device_model_id
+        - node_ident
+        - metadata
+        - created_at
+      allow_aggregations: true
+insert_permissions:
+  - role: admin
+    permission:
+      columns:
+        - machine_id
+        - device_model_id
+        - node_ident
+        - metadata
+      check: {}
+  - role: supervisor
+    permission:
+      columns:
+        - machine_id
+        - device_model_id
+        - node_ident
+        - metadata
+      check:
+        machine:
+          line:
+            plant_id:
+              _eq: x-hasura-plant-id
+  - role: maintenance
+    permission:
+      columns:
+        - machine_id
+        - device_model_id
+        - node_ident
+        - metadata
+      check:
+        machine:
+          line:
+            plant_id:
+              _eq: x-hasura-plant-id
+update_permissions:
+  - role: admin
+    permission:
+      columns:
+        - machine_id
+        - device_model_id
+        - node_ident
+        - metadata
+      filter: {}
+      check: {}
+  - role: supervisor
+    permission:
+      columns:
+        - metadata
+      filter:
+        machine:
+          line:
+            plant_id:
+              _eq: x-hasura-plant-id
+      check:
+        machine:
+          line:
+            plant_id:
+              _eq: x-hasura-plant-id
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {}

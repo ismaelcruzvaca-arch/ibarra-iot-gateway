@@ -1,0 +1,76 @@
+table:
+  schema: public
+  name: alert_events
+select_permissions:
+  - role: supervisor
+    permission:
+      filter:
+        plant_id:
+          _eq: x-hasura-plant-id
+      columns:
+        - id
+        - rule_id
+        - plant_id
+        - node_id
+        - tipo_evento
+        - mensaje
+        - detected_at
+        - dispatched
+        - dispatch_result
+        - created_at
+      allow_aggregations: true
+  - role: maintenance
+    permission:
+      filter:
+        plant_id:
+          _eq: x-hasura-plant-id
+      columns:
+        - id
+        - rule_id
+        - plant_id
+        - node_id
+        - tipo_evento
+        - mensaje
+        - detected_at
+        - dispatched
+        - dispatch_result
+        - created_at
+      allow_aggregations: true
+  - role: admin
+    permission:
+      filter: {}
+      columns:
+        - id
+        - rule_id
+        - plant_id
+        - node_id
+        - tipo_evento
+        - mensaje
+        - detected_at
+        - dispatched
+        - dispatch_result
+        - created_at
+      allow_aggregations: true
+update_permissions:
+  - role: admin
+    permission:
+      columns:
+        - dispatched
+        - dispatch_result
+      filter: {}
+      check: {}
+  - role: supervisor
+    permission:
+      columns:
+        - dispatched
+        - dispatch_result
+      filter:
+        plant_id:
+          _eq: x-hasura-plant-id
+      check:
+        plant_id:
+          _eq: x-hasura-plant-id
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {}

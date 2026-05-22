@@ -1,0 +1,170 @@
+table:
+  schema: public
+  name: alert_rules
+select_permissions:
+  - role: supervisor
+    permission:
+      filter:
+        plant_id:
+          _eq: x-hasura-plant-id
+      columns:
+        - id
+        - plant_id
+        - node_id
+        - status_filter
+        - scope
+        - tipo_condicion
+        - valor_umbral
+        - canales
+        - cooldown_minutos
+        - last_alerted_at
+        - enabled
+        - created_at
+        - updated_at
+      allow_aggregations: true
+  - role: maintenance
+    permission:
+      filter:
+        plant_id:
+          _eq: x-hasura-plant-id
+      columns:
+        - id
+        - plant_id
+        - node_id
+        - status_filter
+        - scope
+        - tipo_condicion
+        - valor_umbral
+        - canales
+        - cooldown_minutos
+        - last_alerted_at
+        - enabled
+        - created_at
+        - updated_at
+      allow_aggregations: true
+  - role: admin
+    permission:
+      filter: {}
+      columns:
+        - id
+        - plant_id
+        - node_id
+        - status_filter
+        - scope
+        - tipo_condicion
+        - valor_umbral
+        - canales
+        - cooldown_minutos
+        - last_alerted_at
+        - enabled
+        - created_at
+        - updated_at
+      allow_aggregations: true
+insert_permissions:
+  - role: supervisor
+    permission:
+      columns:
+        - plant_id
+        - node_id
+        - status_filter
+        - scope
+        - tipo_condicion
+        - valor_umbral
+        - canales
+        - cooldown_minutos
+        - enabled
+      check:
+        plant_id:
+          _eq: x-hasura-plant-id
+  - role: maintenance
+    permission:
+      columns:
+        - plant_id
+        - node_id
+        - status_filter
+        - scope
+        - tipo_condicion
+        - valor_umbral
+        - canales
+        - cooldown_minutos
+        - enabled
+      check:
+        plant_id:
+          _eq: x-hasura-plant-id
+  - role: admin
+    permission:
+      columns:
+        - plant_id
+        - node_id
+        - status_filter
+        - scope
+        - tipo_condicion
+        - valor_umbral
+        - canales
+        - cooldown_minutos
+        - enabled
+        - channel_id
+      check: {}
+update_permissions:
+  - role: supervisor
+    permission:
+      columns:
+        - node_id
+        - status_filter
+        - scope
+        - tipo_condicion
+        - valor_umbral
+        - canales
+        - cooldown_minutos
+        - enabled
+      filter:
+        plant_id:
+          _eq: x-hasura-plant-id
+      check:
+        plant_id:
+          _eq: x-hasura-plant-id
+  - role: maintenance
+    permission:
+      columns:
+        - node_id
+        - status_filter
+        - scope
+        - tipo_condicion
+        - valor_umbral
+        - canales
+        - cooldown_minutos
+        - enabled
+      filter:
+        plant_id:
+          _eq: x-hasura-plant-id
+      check:
+        plant_id:
+          _eq: x-hasura-plant-id
+  - role: admin
+    permission:
+      columns:
+        - plant_id
+        - node_id
+        - status_filter
+        - scope
+        - tipo_condicion
+        - valor_umbral
+        - canales
+        - cooldown_minutos
+        - enabled
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: supervisor
+    permission:
+      filter:
+        plant_id:
+          _eq: x-hasura-plant-id
+  - role: maintenance
+    permission:
+      filter:
+        plant_id:
+          _eq: x-hasura-plant-id
+  - role: admin
+    permission:
+      filter: {}

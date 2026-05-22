@@ -1,0 +1,60 @@
+table:
+  schema: public
+  name: user_plants
+select_permissions:
+  - role: supervisor
+    permission:
+      filter:
+        _and:
+          - user_id:
+              _eq: x-hasura-user-id
+          - plant_id:
+              _eq: x-hasura-plant-id
+      columns:
+        - user_id
+        - plant_id
+        - role
+        - created_at
+      allow_aggregations: false
+  - role: maintenance
+    permission:
+      filter:
+        _and:
+          - user_id:
+              _eq: x-hasura-user-id
+          - plant_id:
+              _eq: x-hasura-plant-id
+      columns:
+        - user_id
+        - plant_id
+        - role
+        - created_at
+      allow_aggregations: false
+  - role: admin
+    permission:
+      filter: {}
+      columns:
+        - user_id
+        - plant_id
+        - role
+        - created_at
+      allow_aggregations: true
+insert_permissions:
+  - role: admin
+    permission:
+      columns:
+        - user_id
+        - plant_id
+        - role
+      check: {}
+update_permissions:
+  - role: admin
+    permission:
+      columns:
+        - role
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {}

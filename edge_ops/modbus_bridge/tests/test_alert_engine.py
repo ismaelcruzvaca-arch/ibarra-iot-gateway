@@ -17,6 +17,10 @@ HEALTHBEAT_DIR = PROJECT_ROOT / "nhost" / "functions" / "alert-healthbeat"
 METADATA_DIR = PROJECT_ROOT / "nhost" / "metadata"
 ADAPTERS_DIR = FUNCTIONS_DIR / "adapters"
 
+# Phase 5: Multi-tenant paths
+MULTI_TENANT_MIGRATIONS = PROJECT_ROOT / "nhost" / "migrations" / "default" / "multi_tenant_core"
+TABLES_METADATA_DIR = PROJECT_ROOT / "nhost" / "metadata" / "databases" / "default" / "tables"
+
 # ===========================================================================
 # Schema validation
 # ===========================================================================
@@ -1721,3 +1725,313 @@ class TestCooldownLogic:
         content = (SILENCE_DETECTOR_DIR / "index.ts").read_text()
         assert "update_alert_rules_by_pk" in content or \
                "defaultUpdateLastAlerted" in content
+
+
+# ===========================================================================
+# Phase 5: Multi-tenant — Migration, Metadata, and Isolation
+# ===========================================================================
+
+
+class TestMultiTenantMigration:
+    """Validate multi_tenant_core migration files exist and contain
+    expected tables, ALTER TABLE statements, and seed data."""
+
+    def test_multi_tenant_directory_exists(self):
+        assert MULTI_TENANT_MIGRATIONS.exists(), \
+            "multi_tenant_core migration directory must exist"
+
+    def test_up_sql_exists(self):
+        assert (MULTI_TENANT_MIGRATIONS / "up.sql").exists(), \
+            "up.sql must exist for multi_tenant_core migration"
+
+    def test_down_sql_exists(self):
+        assert (MULTI_TENANT_MIGRATIONS / "down.sql").exists(), \
+            "down.sql must exist for multi_tenant_core migration"
+
+    def test_up_sql_creates_plants(self):
+        sql = (MULTI_TENANT_MIGRATIONS / "up.sql").read_text()
+        assert "CREATE TABLE IF NOT EXISTS plants" in sql
+
+    def test_up_sql_creates_lines(self):
+        sql = (MULTI_TENANT_MIGRATIONS / "up.sql").read_text()
+        assert "CREATE TABLE IF NOT EXISTS lines" in sql
+        assert "REFERENCES plants(id)" in sql
+
+    def test_up_sql_creates_machines(self):
+        sql = (MULTI_TENANT_MIGRATIONS / "up.sql").read_text()
+        assert "CREATE TABLE IF NOT EXISTS machines" in sql
+        assert "REFERENCES lines(id)" in sql
+
+    def test_up_sql_creates_device_models(self):
+        sql = (MULTI_TENANT_MIGRATIONS / "up.sql").read_text()
+        assert "CREATE TABLE IF NOT EXISTS device_models" in sql
+
+    def test_up_sql_creates_alert_capabilities(self):
+        sql = (MULTI_TENANT_MIGRATIONS / "up.sql").read_text()
+        assert "CREATE TABLE IF NOT EXISTS alert_capabilities" in sql
+
+    def test_up_sql_creates_model_capabilities(self):
+        sql = (MULTI_TENANT_MIGRATIONS / "up.sql").read_text()
+        assert "CREATE TABLE IF NOT EXISTS model_capabilities" in sql
+
+    def test_up_sql_creates_nodes(self):
+        sql = (MULTI_TENANT_MIGRATIONS / "up.sql").read_text()
+        assert "CREATE TABLE IF NOT EXISTS nodes" in sql
+        assert "REFERENCES machines(id)" in sql
+        assert "REFERENCES device_models(id)" in sql
+
+    def test_up_sql_creates_user_plants(self):
+        sql = (MULTI_TENANT_MIGRATIONS / "up.sql").read_text()
+        assert "CREATE TABLE IF NOT EXISTS user_plants" in sql
+        assert "REFERENCES plants(id)" in sql
+
+    def test_up_sql_alters_alert_rules_add_plant_id(self):
+        sql = (MULTI_TENANT_MIGRATIONS / "up.sql").read_text()
+        assert "ALTER TABLE alert_rules" in sql
+        assert "ADD COLUMN IF NOT EXISTS plant_id" in sql
+        assert "REFERENCES plants(id)" in sql
+
+    def test_up_sql_alters_alert_events_add_plant_id(self):
+        sql = (MULTI_TENANT_MIGRATIONS / "up.sql").read_text()
+        assert "ALTER TABLE alert_events" in sql
+        assert "ADD COLUMN IF NOT EXISTS plant_id" in sql
+        assert "REFERENCES plants(id)" in sql
+
+    def test_up_sql_has_seed_insert_for_alert_capabilities(self):
+        sql = (MULTI_TENANT_MIGRATIONS / "up.sql").read_text()
+        assert "INSERT INTO alert_capabilities" in sql
+        assert "ON CONFLICT (capability_key) DO NOTHING" in sql
+
+    def test_down_sql_drops_alert_events_plant_id(self):
+        sql = (MULTI_TENANT_MIGRATIONS / "down.sql").read_text()
+        assert "ALTER TABLE alert_events DROP COLUMN IF EXISTS plant_id" in sql
+
+    def test_down_sql_drops_alert_rules_plant_id(self):
+        sql = (MULTI_TENANT_MIGRATIONS / "down.sql").read_text()
+        assert "ALTER TABLE alert_rules DROP COLUMN IF EXISTS plant_id" in sql
+
+    def test_down_sql_drops_all_tables(self):
+        sql = (MULTI_TENANT_MIGRATIONS / "down.sql").read_text()
+        for table in ["user_plants", "nodes", "model_capabilities",
+                       "alert_capabilities", "device_models", "machines",
+                       "lines", "plants"]:
+            assert f"DROP TABLE IF EXISTS {table}" in sql, \
+                f"down.sql must DROP TABLE IF EXISTS {table}"
+
+    def test_down_sql_drops_indexes(self):
+        sql = (MULTI_TENANT_MIGRATIONS / "down.sql").read_text()
+        for idx in ["idx_alert_events_plant_id", "idx_alert_rules_plant_id",
+                     "idx_user_plants_plant_id", "idx_user_plants_user_id",
+                     "idx_nodes_machine_id", "idx_machines_line_id",
+                     "idx_lines_plant_id"]:
+            assert f"DROP INDEX IF EXISTS {idx}" in sql, \
+                f"down.sql must drop index {idx}"
+
+
+class TestHasuraMetadataFiles:
+    """Validate that Hasura table metadata YAML files exist for all
+    multi-tenant tables and contain RLS configuration referencing
+    x-hasura-plant-id."""
+
+    EXPECTED_TABLES = [
+        "public_plants",
+        "public_lines",
+        "public_machines",
+        "public_nodes",
+        "public_device_models",
+        "public_alert_capabilities",
+        "public_model_capabilities",
+        "public_alert_rules",
+        "public_alert_events",
+        "public_user_plants",
+    ]
+
+    def test_tables_metadata_directory_exists(self):
+        assert TABLES_METADATA_DIR.exists(), \
+            "tables metadata directory must exist"
+
+    def test_all_expected_table_yamls_exist(self):
+        for table_name in self.EXPECTED_TABLES:
+            yaml_path = TABLES_METADATA_DIR / f"{table_name}.yaml"
+            assert yaml_path.exists(), \
+                f"Expected metadata file {table_name}.yaml must exist"
+
+    def test_no_extra_yaml_files(self):
+        expected = {f"{t}.yaml" for t in self.EXPECTED_TABLES}
+        actual = {f.name for f in TABLES_METADATA_DIR.iterdir() if f.suffix == ".yaml"}
+        assert actual == expected, \
+            f"Unexpected metadata files: {actual - expected}"
+
+    def test_alert_rules_yaml_has_rls_on_plant_id(self):
+        content = (TABLES_METADATA_DIR / "public_alert_rules.yaml").read_text()
+        assert "x-hasura-plant-id" in content
+        assert "plant_id" in content
+
+    def test_alert_events_yaml_has_rls_on_plant_id(self):
+        content = (TABLES_METADATA_DIR / "public_alert_events.yaml").read_text()
+        assert "x-hasura-plant-id" in content
+        assert "plant_id" in content
+
+    def test_lines_yaml_has_rls_on_plant_id(self):
+        content = (TABLES_METADATA_DIR / "public_lines.yaml").read_text()
+        assert "x-hasura-plant-id" in content
+
+    def test_machines_yaml_has_rls_via_relationship(self):
+        content = (TABLES_METADATA_DIR / "public_machines.yaml").read_text()
+        assert "x-hasura-plant-id" in content
+        assert "line" in content  # relationship traversal
+
+    def test_nodes_yaml_has_rls_via_relationship(self):
+        content = (TABLES_METADATA_DIR / "public_nodes.yaml").read_text()
+        assert "x-hasura-plant-id" in content
+        assert "machine" in content  # relationship traversal
+
+    def test_plants_yaml_has_rls_on_id(self):
+        content = (TABLES_METADATA_DIR / "public_plants.yaml").read_text()
+        assert "x-hasura-plant-id" in content
+
+    def test_user_plants_yaml_has_rls_on_user_id(self):
+        content = (TABLES_METADATA_DIR / "public_user_plants.yaml").read_text()
+        assert "x-hasura-user-id" in content
+        assert "x-hasura-plant-id" in content
+
+    def test_each_yaml_has_supervisor_role(self):
+        """Every table YAML must define supervisor role permissions."""
+        for table_name in self.EXPECTED_TABLES:
+            content = (TABLES_METADATA_DIR / f"{table_name}.yaml").read_text()
+            assert "role: supervisor" in content, \
+                f"{table_name}.yaml must have supervisor role"
+
+    def test_alert_rules_filter_references_plant_id(self):
+        """alert_rules supervisor filter must reference x-hasura-plant-id."""
+        content = (TABLES_METADATA_DIR / "public_alert_rules.yaml").read_text()
+        assert "_eq: x-hasura-plant-id" in content
+
+
+class TestMultiTenantIsolation:
+    """Validate that RLS metadata enforces plant-level isolation for
+    supervisor role. A supervisor from plant A must not access data
+    from plant B."""
+
+    def test_alert_rules_supervisor_filter_uses_plant_id(self):
+        """supervisor SELECT on alert_rules must filter by plant_id."""
+        content = (TABLES_METADATA_DIR / "public_alert_rules.yaml").read_text()
+        assert "plant_id:" in content
+        assert "_eq: x-hasura-plant-id" in content
+
+    def test_alert_rules_supervisor_check_on_insert(self):
+        """supervisor INSERT on alert_rules must check plant_id matches."""
+        content = (TABLES_METADATA_DIR / "public_alert_rules.yaml").read_text()
+        # The check constraint must also reference x-hasura-plant-id
+        assert "check:" in content
+        assert "x-hasura-plant-id" in content
+
+    def test_alert_events_supervisor_filter_uses_plant_id(self):
+        """supervisor SELECT on alert_events must filter by plant_id."""
+        content = (TABLES_METADATA_DIR / "public_alert_events.yaml").read_text()
+        assert "plant_id:" in content
+        assert "_eq: x-hasura-plant-id" in content
+
+    def test_lines_supervisor_filter_uses_plant_id(self):
+        """supervisor SELECT on lines must filter by plant_id."""
+        content = (TABLES_METADATA_DIR / "public_lines.yaml").read_text()
+        assert "plant_id:" in content
+        assert "_eq: x-hasura-plant-id" in content
+
+    def test_user_plants_supervisor_filters_by_both_ids(self):
+        """supervisor on user_plants must filter by both user_id and
+        plant_id."""
+        content = (TABLES_METADATA_DIR / "public_user_plants.yaml").read_text()
+        assert "x-hasura-user-id" in content
+        assert "x-hasura-plant-id" in content
+        assert "_and:" in content
+
+    def test_machines_supervisor_filter_uses_relationship(self):
+        """supervisor on machines must filter through line relationship
+        to plant_id."""
+        content = (TABLES_METADATA_DIR / "public_machines.yaml").read_text()
+        assert "line:" in content
+        assert "plant_id:" in content
+        assert "_eq: x-hasura-plant-id" in content
+
+    def test_nodes_supervisor_filter_uses_relationship(self):
+        """supervisor on nodes must filter through machine→line
+        relationship to plant_id."""
+        content = (TABLES_METADATA_DIR / "public_nodes.yaml").read_text()
+        assert "machine:" in content
+        assert "line:" in content
+        assert "plant_id:" in content
+        assert "_eq: x-hasura-plant-id" in content
+
+    def test_device_models_no_plant_filter(self):
+        """device_models is a global catalog — supervisor has unfiltered
+        SELECT. May return all rows."""
+        content = (TABLES_METADATA_DIR / "public_device_models.yaml").read_text()
+        # The supervisor select must exist and have filter: {} (no filter)
+        assert "role: supervisor" in content
+        assert "filter: {}" in content
+
+    def test_alert_capabilities_no_plant_filter(self):
+        """alert_capabilities is a global catalog — supervisor has
+        unfiltered SELECT."""
+        content = (TABLES_METADATA_DIR / "public_alert_capabilities.yaml").read_text()
+        assert "role: supervisor" in content
+        assert "filter: {}" in content
+
+
+class TestSeedData:
+    """Validate that seed INSERT for alert_capabilities contains all
+    6 expected capability keys."""
+
+    EXPECTED_CAPABILITIES = [
+        "SILENCE_TIMEOUT",
+        "ERROR_THRESHOLD",
+        "FREQUENCY_DROP",
+        "DEFECT_THRESHOLD",
+        "TEMP_CRITICAL",
+        "VIBRATION_HIGH",
+    ]
+
+    def test_seed_insert_exists(self):
+        sql = (MULTI_TENANT_MIGRATIONS / "up.sql").read_text()
+        assert "INSERT INTO alert_capabilities" in sql
+
+    def test_all_six_capabilities_seeded(self):
+        sql = (MULTI_TENANT_MIGRATIONS / "up.sql").read_text()
+        for cap in self.EXPECTED_CAPABILITIES:
+            assert cap in sql, \
+                f"Seed INSERT must include capability '{cap}'"
+
+    def test_seed_uses_on_conflict_do_nothing(self):
+        sql = (MULTI_TENANT_MIGRATIONS / "up.sql").read_text()
+        assert "ON CONFLICT (capability_key) DO NOTHING" in sql
+
+    def _read_up_sql(self) -> str:
+        """Read up.sql with explicit UTF-8 encoding for Spanish characters."""
+        path = MULTI_TENANT_MIGRATIONS / "up.sql"
+        with open(str(path), encoding='utf-8') as f:
+            return f.read()
+
+    def test_silence_timeout_description(self):
+        sql = self._read_up_sql()
+        assert "Paro de máquina por falta de pulsos" in sql
+
+    def test_error_threshold_description(self):
+        sql = self._read_up_sql()
+        assert "Límite de errores de comunicación excedido" in sql
+
+    def test_frequency_drop_description(self):
+        sql = self._read_up_sql()
+        assert "Caída en frecuencia de lecturas" in sql
+
+    def test_defect_threshold_description(self):
+        sql = self._read_up_sql()
+        assert "Cantidad de defectos de calidad" in sql
+
+    def test_temp_critical_description(self):
+        sql = self._read_up_sql()
+        assert "Temperatura del dispositivo" in sql
+
+    def test_vibration_high_description(self):
+        sql = self._read_up_sql()
+        assert "Vibración anormal detectada" in sql

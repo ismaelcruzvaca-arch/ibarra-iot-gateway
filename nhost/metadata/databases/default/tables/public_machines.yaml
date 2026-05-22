@@ -1,0 +1,131 @@
+table:
+  schema: public
+  name: machines
+select_permissions:
+  - role: supervisor
+    permission:
+      filter:
+        line:
+          plant_id:
+            _eq: x-hasura-plant-id
+      columns:
+        - id
+        - line_id
+        - name
+        - machine_type
+        - metadata
+        - created_at
+        - updated_at
+      allow_aggregations: true
+  - role: maintenance
+    permission:
+      filter:
+        line:
+          plant_id:
+            _eq: x-hasura-plant-id
+      columns:
+        - id
+        - line_id
+        - name
+        - machine_type
+        - metadata
+        - created_at
+        - updated_at
+      allow_aggregations: true
+  - role: admin
+    permission:
+      filter: {}
+      columns:
+        - id
+        - line_id
+        - name
+        - machine_type
+        - metadata
+        - created_at
+        - updated_at
+      allow_aggregations: true
+insert_permissions:
+  - role: supervisor
+    permission:
+      columns:
+        - line_id
+        - name
+        - machine_type
+        - metadata
+      check:
+        line:
+          plant_id:
+            _eq: x-hasura-plant-id
+  - role: maintenance
+    permission:
+      columns:
+        - line_id
+        - name
+        - machine_type
+        - metadata
+      check:
+        line:
+          plant_id:
+            _eq: x-hasura-plant-id
+  - role: admin
+    permission:
+      columns:
+        - line_id
+        - name
+        - machine_type
+        - metadata
+      check: {}
+update_permissions:
+  - role: supervisor
+    permission:
+      columns:
+        - name
+        - machine_type
+        - metadata
+      filter:
+        line:
+          plant_id:
+            _eq: x-hasura-plant-id
+      check:
+        line:
+          plant_id:
+            _eq: x-hasura-plant-id
+  - role: maintenance
+    permission:
+      columns:
+        - name
+        - machine_type
+        - metadata
+      filter:
+        line:
+          plant_id:
+            _eq: x-hasura-plant-id
+      check:
+        line:
+          plant_id:
+            _eq: x-hasura-plant-id
+  - role: admin
+    permission:
+      columns:
+        - name
+        - machine_type
+        - metadata
+        - line_id
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: supervisor
+    permission:
+      filter:
+        line:
+          plant_id:
+            _eq: x-hasura-plant-id
+  - role: maintenance
+    permission:
+      filter:
+        line:
+          plant_id:
+            _eq: x-hasura-plant-id
+  - role: admin
+    permission:
+      filter: {}

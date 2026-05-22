@@ -1,0 +1,39 @@
+table:
+  schema: public
+  name: model_capabilities
+select_permissions:
+  - role: supervisor
+    permission:
+      filter: {}
+      columns:
+        - model_id
+        - capability_id
+        - created_at
+      allow_aggregations: true
+  - role: maintenance
+    permission:
+      filter: {}
+      columns:
+        - model_id
+        - capability_id
+        - created_at
+      allow_aggregations: true
+  - role: admin
+    permission:
+      filter: {}
+      columns:
+        - model_id
+        - capability_id
+        - created_at
+      allow_aggregations: true
+insert_permissions:
+  - role: admin
+    permission:
+      columns:
+        - model_id
+        - capability_id
+      check: {}
+delete_permissions:
+  - role: admin
+    permission:
+      filter: {}
