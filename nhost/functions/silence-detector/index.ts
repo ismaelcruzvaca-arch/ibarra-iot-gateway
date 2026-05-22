@@ -1,18 +1,21 @@
 // ============================================================================
-// index.ts — Silence Detector Nhost Function entry point
+// index.ts — Rule Evaluator Nhost Function entry point
 //
 // Cron-triggered function that runs every 1 minute (via Nhost cron trigger
-// silence-detector-cron). Evaluates all USER_DEFINED SILENCE_TIMEOUT rules
-// and inserts alert_events for any machines that have exceeded their silence
-// threshold.
+// silence-detector-cron). Evaluates all USER_DEFINED rules (SILENCE_TIMEOUT
+// and ERROR_THRESHOLD) and inserts alert_events for any machines that have
+// exceeded their silence threshold or error threshold.
 //
-// This function does NOT dispatch messages — it only detects silence violations
+// For SILENCE_TIMEOUT: detects machines that have stopped sending telemetry.
+// For ERROR_THRESHOLD: counts error events within a configurable time window.
+//
+// This function does NOT dispatch messages — it only detects violations
 // and inserts events. The existing alert-dispatcher handles the actual dispatch
 // via a separate Event Trigger on alert_events.
 // ============================================================================
 
 import { SilenceDetectorEngine } from './engine';
-import type { SilenceRule, AlertEventInsert, HealthEntry, EvaluationResult } from './engine';
+import type { Rule, AlertEventInsert, HealthEntry, EvaluationResult } from './engine';
 
 // ---------------------------------------------------------------------------
 // Default implementations (production)
@@ -39,24 +42,27 @@ async function graphqlRequest(query: string): Promise<Record<string, unknown>> {
 }
 
 /**
- * Default implementation: queries all enabled USER_DEFINED SILENCE_TIMEOUT rules.
+ * Default implementation: queries all enabled USER_DEFINED rules
+ * (SILENCE_TIMEOUT and ERROR_THRESHOLD).
  */
-async function defaultQueryRules(): Promise<SilenceRule[]> {
+async function defaultQueryRules(): Promise<Rule[]> {
   const query = `
     query {
       alert_rules(
         where: {
           scope: { _eq: "USER_DEFINED" },
-          tipo_condicion: { _eq: "SILENCE_TIMEOUT" },
+          tipo_condicion: { _in: ["SILENCE_TIMEOUT", "ERROR_THRESHOLD"] },
           enabled: { _eq: true }
         }
       ) {
         id
         node_id
+        tipo_condicion
         valor_umbral
         canales
         cooldown_minutos
         last_alerted_at
+        ventana_minutos
       }
     }
   `;
@@ -70,10 +76,12 @@ async function defaultQueryRules(): Promise<SilenceRule[]> {
   return rules.map((r) => ({
     id: r.id as string,
     node_id: r.node_id as string,
+    tipo_condicion: (r.tipo_condicion as 'SILENCE_TIMEOUT' | 'ERROR_THRESHOLD') ?? 'SILENCE_TIMEOUT',
     valor_umbral: r.valor_umbral as number,
     canales: (r.canales as string[]) ?? [],
     cooldown_minutos: (r.cooldown_minutos as number) ?? 30,
     last_alerted_at: (r.last_alerted_at as string | null) ?? null,
+    ventana_minutos: (r.ventana_minutos as number) ?? 5,
   }));
 }
 
@@ -156,6 +164,31 @@ async function defaultWriteHealth(entry: HealthEntry): Promise<void> {
   await graphqlRequest(mutation);
 }
 
+/**
+ * Default implementation: counts error events in norvi_telemetry for a given
+ * node within the specified time window (ventana_minutos).
+ */
+async function defaultQueryErrorCount(nodeId: string, ventanaMinutos: number): Promise<number> {
+  const since = new Date(Date.now() - ventanaMinutos * 60 * 1000).toISOString();
+  const query = `
+    query {
+      norvi_telemetry_aggregate(
+        where: {
+          node_id: { _eq: "${nodeId}" },
+          event_ts: { _gte: "${since}" }
+        }
+      ) {
+        aggregate { count }
+      }
+    }
+  `;
+
+  const result = await graphqlRequest(query);
+  const data = result.data as Record<string, unknown> | undefined;
+  const agg = data?.norvi_telemetry_aggregate as Record<string, unknown> | undefined;
+  return (agg?.aggregate as Record<string, number> | undefined)?.count ?? 0;
+}
+
 // ---------------------------------------------------------------------------
 // Nhost Function handler
 // ---------------------------------------------------------------------------
@@ -164,8 +197,9 @@ async function defaultWriteHealth(entry: HealthEntry): Promise<void> {
  * Nhost Function handler for the silence-detector cron trigger.
  *
  * Runs every 1 minute (via silence-detector-cron). Evaluates all
- * USER_DEFINED SILENCE_TIMEOUT rules and inserts alert_events for
- * any machines that have exceeded their silence threshold.
+ * USER_DEFINED rules (SILENCE_TIMEOUT and ERROR_THRESHOLD) and
+ * inserts alert_events for any machines that have exceeded their
+ * silence threshold or error threshold.
  *
  * Returns HTTP 200 with evaluation summary on success,
  * HTTP 500 if an unexpected error occurs.
@@ -185,6 +219,7 @@ export async function handler(
     const result: EvaluationResult = await engine.evaluate(
       defaultQueryRules,
       defaultQueryLastEvent,
+      defaultQueryErrorCount,
       defaultInsertAlertEvent,
       defaultUpdateLastAlerted,
       defaultWriteHealth,

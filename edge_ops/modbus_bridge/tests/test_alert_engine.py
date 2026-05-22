@@ -1324,6 +1324,7 @@ class TestE2eMessageFlow:
 # ===========================================================================
 
 SILENCE_DETECTOR_DIR = PROJECT_ROOT / "nhost" / "functions" / "silence-detector"
+NHOST_ALERT_RULES_WINDOW_MIGRATIONS = PROJECT_ROOT / "nhost" / "migrations" / "default" / "alert_rules_window"
 
 
 class TestMigrationV2:
@@ -1437,6 +1438,16 @@ class TestSilenceDetectorFiles:
         assert actual == expected, \
             f"Unexpected files in silence-detector: {actual - expected}"
 
+    def test_engine_exports_rule_type(self):
+        """engine.ts must export the Rule interface."""
+        content = (SILENCE_DETECTOR_DIR / "engine.ts").read_text()
+        assert "export interface Rule" in content
+
+    def test_engine_exports_alert_event_insert_type(self):
+        """engine.ts must export the AlertEventInsert interface."""
+        content = (SILENCE_DETECTOR_DIR / "engine.ts").read_text()
+        assert "export interface AlertEventInsert" in content
+
 
 # ===========================================================================
 # Phase 4: Silence Detector — Engine contract
@@ -1460,9 +1471,9 @@ class TestSilenceDetectorEngineContract:
         content = self.ENGINE_PATH.read_text()
         assert "async evaluate(" in content
 
-    def test_engine_exports_silence_rule_interface(self):
+    def test_engine_exports_rule_interface(self):
         content = self.ENGINE_PATH.read_text()
-        assert "export interface SilenceRule" in content
+        assert "export interface Rule" in content
 
     def test_engine_exports_evaluation_result_interface(self):
         content = self.ENGINE_PATH.read_text()
@@ -1479,19 +1490,20 @@ class TestSilenceDetectorEngineContract:
         content = self.ENGINE_PATH.read_text()
         assert "export interface HealthEntry" in content
 
-    def test_silence_rule_has_all_fields(self):
+    def test_rule_has_all_fields(self):
         content = self.ENGINE_PATH.read_text()
-        for field in ["id", "node_id", "valor_umbral", "canales", "cooldown_minutos", "last_alerted_at"]:
+        for field in ["id", "node_id", "tipo_condicion", "valor_umbral", "canales", "cooldown_minutos", "last_alerted_at", "ventana_minutos"]:
             assert field in content, \
-                f"SilenceRule must have field '{field}'"
+                f"Rule must have field '{field}'"
 
-    def test_evaluate_accepts_five_injected_functions(self):
-        """evaluate() must accept 5 injected function parameters for DI."""
+    def test_evaluate_accepts_six_injected_functions(self):
+        """evaluate() must accept 6 injected function parameters for DI."""
         content = self.ENGINE_PATH.read_text()
         # The evaluate method signature
         assert "evaluate(" in content
         assert "queryRulesFn" in content
         assert "queryLastEventFn" in content
+        assert "queryErrorCountFn" in content
         assert "insertAlertEventFn" in content
         assert "updateLastAlertedFn" in content
         assert "writeHealthFn" in content
@@ -1537,6 +1549,58 @@ class TestSilenceDetectorEngineContract:
         """When no telemetry exists for a node, evaluate() skips that rule."""
         content = self.ENGINE_PATH.read_text()
         assert "lastEventTs === null" in content
+
+    # -----------------------------------------------------------------------
+    # ERROR_THRESHOLD-specific contract tests
+    # -----------------------------------------------------------------------
+
+    def test_evaluate_has_polymorphic_condition_branch(self):
+        """evaluate() must branch on rule.tipo_condicion."""
+        content = self.ENGINE_PATH.read_text()
+        assert "tipo_condicion === 'SILENCE_TIMEOUT'" in content
+        assert "tipo_condicion === 'ERROR_THRESHOLD'" in content
+
+    def test_evaluate_error_threshold_calls_query_error_count(self):
+        """ERROR_THRESHOLD branch must call queryErrorCountFn."""
+        content = self.ENGINE_PATH.read_text()
+        assert "queryErrorCountFn" in content
+        assert "ventana_minutos" in content
+
+    def test_evaluate_error_threshold_count_exceeded_creates_event(self):
+        """When error count >= valor_umbral, an alert event must be created."""
+        content = self.ENGINE_PATH.read_text()
+        assert "errorCount >= rule.valor_umbral" in content
+        assert "shouldAlert = true" in content
+
+    def test_evaluate_error_threshold_count_below_umbral_skips(self):
+        """When error count < valor_umbral, the rule must be skipped."""
+        content = self.ENGINE_PATH.read_text()
+        # The ERROR_THRESHOLD branch only sets shouldAlert=true when count >= umbral
+        assert "shouldAlert = true" in content
+        # If shouldAlert stays false, no alert is inserted (checked by shouldAlert block)
+
+    def test_evaluate_error_threshold_respects_cooldown(self):
+        """ERROR_THRESHOLD rules must respect cooldown (same as SILENCE_TIMEOUT)."""
+        content = self.ENGINE_PATH.read_text()
+        assert "cooldown_minutos" in content
+        assert "60 * 1000" in content
+
+    def test_evaluate_mixed_rules_both_types(self):
+        """The engine loop must handle both rule types in a single cycle."""
+        content = self.ENGINE_PATH.read_text()
+        assert "SILENCE_TIMEOUT" in content
+        assert "ERROR_THRESHOLD" in content
+        # Both branches exist inside the same for loop
+        assert "tipo_condicion === 'SILENCE_TIMEOUT'" in content
+        assert "tipo_condicion === 'ERROR_THRESHOLD'" in content
+
+    def test_evaluate_error_threshold_uses_ventana_minutos(self):
+        """ERROR_THRESHOLD branch must use ventana_minutos for the time window."""
+        content = self.ENGINE_PATH.read_text()
+        assert "ventana_minutos" in content
+        # The default should be 5 minutes
+        assert "rule.ventana_minutos" in content
+        assert "5" in content
 
 
 # ===========================================================================
@@ -2035,3 +2099,42 @@ class TestSeedData:
     def test_vibration_high_description(self):
         sql = self._read_up_sql()
         assert "Vibración anormal detectada" in sql
+
+
+# ===========================================================================
+# Phase 6: ERROR_THRESHOLD — Migration + Polymorphic Engine
+# ===========================================================================
+
+
+class TestErrorThresholdMigration:
+    """Validate that alert_rules_window migration exists and contains
+    the ventana_minutos column and related index."""
+
+    def test_migration_directory_exists(self):
+        assert NHOST_ALERT_RULES_WINDOW_MIGRATIONS.exists(), \
+            "alert_rules_window migration directory must exist"
+
+    def test_up_sql_exists(self):
+        assert (NHOST_ALERT_RULES_WINDOW_MIGRATIONS / "up.sql").exists(), \
+            "up.sql must exist for alert_rules_window migration"
+
+    def test_down_sql_exists(self):
+        assert (NHOST_ALERT_RULES_WINDOW_MIGRATIONS / "down.sql").exists(), \
+            "down.sql must exist for alert_rules_window migration"
+
+    def test_up_sql_adds_ventana_minutos(self):
+        sql = (NHOST_ALERT_RULES_WINDOW_MIGRATIONS / "up.sql").read_text()
+        assert "ADD COLUMN IF NOT EXISTS ventana_minutos" in sql
+        assert "INTEGER DEFAULT 5" in sql
+
+    def test_up_sql_has_ventana_index(self):
+        sql = (NHOST_ALERT_RULES_WINDOW_MIGRATIONS / "up.sql").read_text()
+        assert "CREATE INDEX IF NOT EXISTS idx_alert_rules_ventana" in sql
+
+    def test_down_sql_drops_ventana_minutos(self):
+        sql = (NHOST_ALERT_RULES_WINDOW_MIGRATIONS / "down.sql").read_text()
+        assert "DROP COLUMN IF EXISTS ventana_minutos" in sql
+
+    def test_down_sql_drops_ventana_index(self):
+        sql = (NHOST_ALERT_RULES_WINDOW_MIGRATIONS / "down.sql").read_text()
+        assert "DROP INDEX IF EXISTS idx_alert_rules_ventana" in sql
