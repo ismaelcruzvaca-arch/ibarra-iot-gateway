@@ -4,14 +4,16 @@ package ibarra.telemetry;
 
 // Operating status of a Modbus edge node.
 enum OperatingStatus {
-  STATUS_UNKNOWN = 0;
-  STATUS_OK      = 1;
-  STATUS_FAULT   = 2;
+  STATUS_UNKNOWN   = 0;
+  STATUS_RUNNING   = 1;
+  STATUS_STOPPED   = 2;
+  STATUS_ALARM     = 3;
+  STATUS_MAINTENANCE = 4;
 }
 
 // State snapshot for a single Modbus edge node.
 message ModbusNodeState {
-  uint32          node_id     = 1;
+  string          node_id     = 1;
   uint32          cycle_count = 2;
   OperatingStatus status      = 3;
 }
