@@ -1,0 +1,58 @@
+# ============================================================================
+# gema-vision.service  —  GEMA Vision Inference Pipeline
+#
+# Installed at:  /etc/systemd/system/gema-vision.service
+# Environment:   /etc/gema-vision.env
+# Binary:        /usr/bin/gema-vision
+#
+# ## Failure safety
+#
+#   Restart=always     — respawn the process on ANY exit code
+#   RestartSec=5       — wait 5 s before respawning (avoid restart storms)
+#   OOMScoreAdjust=-1000 — never killed by OOM killer (prefer to kill
+#                          anything else — kernel, NPU driver, etc.)
+#   LimitNOFILE=4096   — enough fds for camera + MQTT + watchdog
+#
+# ## Watchdog dependency
+#
+# The RV1106 hardware WDT runs independently inside the process.
+# If the process is killed by OOM or a kernel bug, the WDT keepalive
+# stops and the hardware resets the entire SoC after the timeout
+# (~15 s).
+# ============================================================================
+
+[Unit]
+Description=GEMA Vision Inference Pipeline — RV1106
+Documentation=https://github.com/ibarra-iot-gateway
+After=network.target
+
+[Service]
+Type=simple
+
+# Paths
+ExecStart=/usr/bin/gema-vision
+EnvironmentFile=/etc/gema-vision.env
+WorkingDirectory=/userdata/gema-vision
+
+# Restart policy
+Restart=always
+RestartSec=5
+StartLimitInterval=300
+StartLimitBurst=5
+
+# OOM protection — this is the most critical process on the system.
+# Linux will kill any other process before touching this one.
+OOMScoreAdjust=-1000
+
+# File descriptor limit (camera, MQTT, watchdog, log)
+LimitNOFILE=4096
+
+# Core dump for post-mortem debugging
+LimitCORE=infinity
+
+# Standard I/O goes to journald
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

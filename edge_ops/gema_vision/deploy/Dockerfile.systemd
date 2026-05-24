@@ -1,0 +1,76 @@
+# ============================================================================
+# Dockerfile.systemd  —  Integration test for gema-vision daemon + systemd
+#
+# Tests that:
+#   1. The service starts correctly via systemd
+#   2. The watchdog keepalive thread runs
+#   3. If the process crashes (SIGKILL), systemd restarts it
+#   4. OOMScoreAdjust is applied
+#
+# Build:
+#   docker build -f deploy/Dockerfile.systemd -t gema-systemd-test .
+#
+# Run:
+#   docker run --privileged --rm -it gema-systemd-test
+#
+# Inside the container:
+#   systemctl status gema-vision
+#   ./test_restart.sh   # kills the process and verifies restart
+# ============================================================================
+
+FROM ubuntu:22.04
+
+LABEL description="GEMA Vision — systemd integration test environment"
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV container=docker
+
+# Install systemd + build deps.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    systemd \
+    systemd-sysv \
+    build-essential \
+    cmake \
+    libopencv-dev \
+    libgtest-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build GTest from source (Ubuntu ships source-only).
+WORKDIR /tmp/gtest
+RUN cmake /usr/src/googletest -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build . --parallel \
+    && cp lib/*.a /usr/lib/ \
+    && cp -r /usr/src/googletest/googletest/include/gtest /usr/include/ \
+    && cp -r /usr/src/googletest/googlemock/include/gmock /usr/include/
+
+# ---- Build gema-vision ---------------------------------------------------
+WORKDIR /workspace
+COPY CMakeLists.txt .
+COPY include/ include/
+COPY src/ src/
+COPY test/ test/
+
+RUN cmake -B build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --parallel
+
+# Install the binary + service for systemd testing.
+COPY deploy/gema-vision.service /etc/systemd/system/gema-vision.service
+COPY deploy/gema-vision.env /etc/gema-vision.env
+
+RUN mkdir -p /userdata/gema-vision/model \
+    && cp build/gema-vision /usr/bin/gema-vision \
+    && chmod 755 /usr/bin/gema-vision
+
+# Disable getty and other unnecessary services for container.
+RUN systemctl mask systemd-logind console-getty.service getty.target
+
+# Test script (will be run manually inside the container).
+COPY deploy/test_restart.sh /usr/bin/test_restart.sh
+RUN chmod 755 /usr/bin/test_restart.sh
+
+# systemd requires this volume mount at runtime.
+VOLUME ["/sys/fs/cgroup"]
+
+# Start systemd as PID 1.
+STOPSIGNAL SIGRTMIN+3
+CMD ["/lib/systemd/systemd", "--log-level=info", "--log-target=journal"]
