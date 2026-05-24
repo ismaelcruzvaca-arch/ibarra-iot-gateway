@@ -17,10 +17,12 @@ InferenceOrchestrator::InferenceOrchestrator(
     InferenceEngine& engine,
     ThreadSafeQueue<cv::Mat>& frame_queue,
     MqttClient& mqtt,
+    SpatialCalibrator& calibrator,
     int camera_index) noexcept
     : engine_(engine)
     , frame_queue_(frame_queue)
     , mqtt_(mqtt)
+    , calibrator_(calibrator)
     , camera_index_(camera_index)
 {}
 
@@ -75,6 +77,9 @@ void InferenceOrchestrator::consumer_loop()
 
         // --- 1. Run inference ---------------------------------------------
         PrimitiveBatch primitives = engine_.infer(frame);
+
+        // --- 1b. Spatial calibration (pixel → mm via homography) ----------
+        calibrator_.apply_batch(primitives);
 
         // --- 2. Build structured result -----------------------------------
         InferenceResult result;
@@ -135,7 +140,12 @@ std::string InferenceOrchestrator::serialize_to_json(
         json << "      \"confidence\": "  << p.confidence  << ",\n";
         json << "      \"bbox\": ["
              << p.bbox.x << "," << p.bbox.y << ","
-             << p.bbox.width << "," << p.bbox.height << "]\n";
+             << p.bbox.width << "," << p.bbox.height << "],\n";
+        json << "      \"physical_coords_mm\": ["
+             << p.physical_coords_mm.x << ", "
+             << p.physical_coords_mm.y << "],\n";
+        json << "      \"has_physical_coords\": "
+             << (p.has_physical_coords ? "true" : "false") << "\n";
         json << "    }";
         if (i + 1 < result.primitives.size()) {
             json << ",";

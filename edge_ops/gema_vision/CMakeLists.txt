@@ -26,6 +26,7 @@ add_library(gema_vision_lib
     src/inference_orchestrator.cpp
     src/data_collector_engine.cpp
     src/watchdog.cpp
+    src/spatial_calibrator.cpp
 )
 
 target_include_directories(gema_vision_lib

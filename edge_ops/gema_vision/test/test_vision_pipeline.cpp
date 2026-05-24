@@ -20,6 +20,7 @@
 #include "inference_orchestrator.hpp"
 #include "mock_engine.hpp"
 #include "mock_flash_trigger.hpp"
+#include "spatial_calibrator.hpp"
 #include "thread_safe_queue.hpp"
 #include "visual_primitive.hpp"
 
@@ -84,6 +85,9 @@ protected:
     }
 
     std::atomic<int> publish_count_{0};
+
+    // Uncalibrated calibrator (no H loaded — no-op by design).
+    SpatialCalibrator calibrator_;
 };
 
 // ===========================================================================
@@ -103,7 +107,7 @@ TEST_F(VisionPipelineTest, ConsumerProcessesAllFrames)
     // MockFlashTrigger is exercised by the producer (separate test);
     // here we test the consumer in isolation.
 
-    InferenceOrchestrator orchestrator(engine, queue, mqtt_client);
+    InferenceOrchestrator orchestrator(engine, queue, mqtt_client, calibrator_);
 
     // ---- Act -------------------------------------------------------------
     orchestrator.start();
@@ -136,7 +140,7 @@ TEST_F(VisionPipelineTest, NoFramesNoCrash)
     MockEngine              engine(20);
     MockMqttClient          mqtt_client;
 
-    InferenceOrchestrator orchestrator(engine, queue, mqtt_client);
+    InferenceOrchestrator orchestrator(engine, queue, mqtt_client, calibrator_);
 
     orchestrator.start();
     // Push nothing — queue stays empty.
@@ -175,7 +179,7 @@ TEST_F(VisionPipelineTest, DoubleStartStopIsIdempotent)
     MockEngine              engine(5);
     MockMqttClient          mqtt_client;
 
-    InferenceOrchestrator orchestrator(engine, queue, mqtt_client);
+    InferenceOrchestrator orchestrator(engine, queue, mqtt_client, calibrator_);
 
     // Start twice.
     orchestrator.start();
@@ -347,6 +351,190 @@ TEST_F(DataCollectorTest, SetModeBackToIdle)
     }
     EXPECT_EQ(engine_->capture_count(), 1);
     EXPECT_EQ(jpeg_count(), 1);
+}
+
+// ===========================================================================
+// SpatialCalibrator Tests
+// ===========================================================================
+
+class SpatialCalibratorTest : public ::testing::Test {
+protected:
+    void SetUp() override
+    {
+        // Identity homography: pixel == mm (1:1 mapping, no skew).
+        // Useful for deterministic test assertions.
+        identity_H_ = {
+            1.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 1.0f
+        };
+    }
+
+    /** Build a simple primitive for testing. */
+    VisualPrimitive make_primitive(int x, int y, int w, int h) const
+    {
+        VisualPrimitive p;
+        p.bbox = cv::Rect(x, y, w, h);
+        return p;
+    }
+
+    std::vector<float> identity_H_;
+};
+
+// ---------------------------------------------------------------------------
+// Test: Default state — uncalibrated
+// ---------------------------------------------------------------------------
+
+TEST_F(SpatialCalibratorTest, DefaultStateIsUncalibrated)
+{
+    SpatialCalibrator cal;
+    EXPECT_FALSE(cal.is_calibrated());
+}
+
+// ---------------------------------------------------------------------------
+// Test: Load valid homography → calibrated
+// ---------------------------------------------------------------------------
+
+TEST_F(SpatialCalibratorTest, LoadValidHomography)
+{
+    SpatialCalibrator cal;
+    EXPECT_TRUE(cal.load_from_vector(identity_H_));
+    EXPECT_TRUE(cal.is_calibrated());
+}
+
+// ---------------------------------------------------------------------------
+// Test: Load invalid (empty) vector → not calibrated
+// ---------------------------------------------------------------------------
+
+TEST_F(SpatialCalibratorTest, LoadInvalidEmpty)
+{
+    SpatialCalibrator cal;
+    EXPECT_FALSE(cal.load_from_vector({}));
+    EXPECT_FALSE(cal.is_calibrated());
+}
+
+// ---------------------------------------------------------------------------
+// Test: Load degenerate (zero determinant) → not calibrated
+// ---------------------------------------------------------------------------
+
+TEST_F(SpatialCalibratorTest, LoadDegenerateMatrix)
+{
+    SpatialCalibrator cal;
+    // All zeros → determinant = 0 → degenerate.
+    EXPECT_FALSE(cal.load_from_vector({0,0,0, 0,0,0, 0,0,0}));
+    EXPECT_FALSE(cal.is_calibrated());
+}
+
+// ---------------------------------------------------------------------------
+// Test: Bottom-centre anchor point with identity homography
+// ---------------------------------------------------------------------------
+
+TEST_F(SpatialCalibratorTest, BottomCentreAnchorWithIdentity)
+{
+    SpatialCalibrator cal;
+    ASSERT_TRUE(cal.load_from_vector(identity_H_));
+
+    // Primitive at x=100, y=200, width=50, height=80.
+    // Anchor point = (100 + 50/2, 200 + 80) = (125, 280)
+    VisualPrimitive p = make_primitive(100, 200, 50, 80);
+
+    cal.apply(p);
+
+    EXPECT_TRUE(p.has_physical_coords);
+    EXPECT_FLOAT_EQ(p.physical_coords_mm.x, 125.0f);
+    EXPECT_FLOAT_EQ(p.physical_coords_mm.y, 280.0f);
+}
+
+// ---------------------------------------------------------------------------
+// Test: Uncalibrated apply is a no-op
+// ---------------------------------------------------------------------------
+
+TEST_F(SpatialCalibratorTest, UncalibratedApplyIsNoOp)
+{
+    SpatialCalibrator cal;  // NOT calibrated
+    VisualPrimitive p = make_primitive(100, 200, 50, 80);
+
+    cal.apply(p);
+
+    EXPECT_FALSE(p.has_physical_coords);
+    EXPECT_FLOAT_EQ(p.physical_coords_mm.x, -1.0f);
+    EXPECT_FLOAT_EQ(p.physical_coords_mm.y, -1.0f);
+}
+
+// ---------------------------------------------------------------------------
+// Test: Batch apply calibrates all primitives
+// ---------------------------------------------------------------------------
+
+TEST_F(SpatialCalibratorTest, BatchApplyCalibratesAll)
+{
+    SpatialCalibrator cal;
+    ASSERT_TRUE(cal.load_from_vector(identity_H_));
+
+    PrimitiveBatch batch;
+    batch.push_back(make_primitive(0, 0, 100, 100));
+    batch.push_back(make_primitive(200, 150, 60, 40));
+
+    cal.apply_batch(batch);
+
+    for (const auto& p : batch) {
+        EXPECT_TRUE(p.has_physical_coords);
+        EXPECT_NE(p.physical_coords_mm.x, -1.0f);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Test: Load from file (identity matrix in JSON)
+// ---------------------------------------------------------------------------
+
+TEST_F(SpatialCalibratorTest, LoadFromFile)
+{
+    auto tmp = std::filesystem::temp_directory_path();
+    auto path = tmp / "test_calibrator_config.json";
+
+    {
+        std::ofstream f(path);
+        f << R"({
+            "homography": [1, 0, 0, 0, 1, 0, 0, 0, 1]
+        })";
+    }
+
+    SpatialCalibrator cal;
+    EXPECT_TRUE(cal.load_from_file(path.string()));
+    EXPECT_TRUE(cal.is_calibrated());
+
+    std::filesystem::remove(path);
+}
+
+// ---------------------------------------------------------------------------
+// Test: Load from file with malformed JSON → graceful failure
+// ---------------------------------------------------------------------------
+
+TEST_F(SpatialCalibratorTest, LoadFromFileMalformed)
+{
+    auto tmp = std::filesystem::temp_directory_path();
+    auto path = tmp / "test_calibrator_bad.json";
+
+    {
+        std::ofstream f(path);
+        f << R"(not json at all)";
+    }
+
+    SpatialCalibrator cal;
+    EXPECT_FALSE(cal.load_from_file(path.string()));
+    EXPECT_FALSE(cal.is_calibrated());
+
+    std::filesystem::remove(path);
+}
+
+// ---------------------------------------------------------------------------
+// Test: Non-existent file → graceful failure
+// ---------------------------------------------------------------------------
+
+TEST_F(SpatialCalibratorTest, LoadFromFileNotFound)
+{
+    SpatialCalibrator cal;
+    EXPECT_FALSE(cal.load_from_file("/nonexistent/config.json"));
+    EXPECT_FALSE(cal.is_calibrated());
 }
 
 }  // namespace vision

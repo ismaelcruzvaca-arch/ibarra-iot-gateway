@@ -1,0 +1,16 @@
+{
+    "_comment": "Calibración espacial para GEMA Vision Pipeline",
+    "_description": "Generado por calibration_wizard.py durante la instalación. Cada cámara tiene su propia H.",
+
+    "homography": [
+        1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0,
+        0.0, 0.0, 1.0
+    ],
+
+    "product_height_mm": 0.0,
+    "camera_height_mm": 500.0,
+
+    "_homography_help": "Matriz 3x3 en orden row-major: h00 h01 h02 h10 h11 h12 h20 h21 h22",
+    "_anchor_help": "Se proyecta el bottom-center del bbox (Z=0). product_height_mm para corrección futura de paralaje."
+}

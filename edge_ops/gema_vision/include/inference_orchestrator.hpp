@@ -2,6 +2,7 @@
 
 #include "flash_trigger.hpp"
 #include "inference_engine.hpp"
+#include "spatial_calibrator.hpp"
 #include "thread_safe_queue.hpp"
 
 #include <opencv2/opencv.hpp>
@@ -97,6 +98,7 @@ public:
         InferenceEngine& engine,
         ThreadSafeQueue<cv::Mat>& frame_queue,
         MqttClient& mqtt,
+        SpatialCalibrator& calibrator,
         int camera_index = 0) noexcept;
 
     ~InferenceOrchestrator();
@@ -151,6 +153,7 @@ private:
     InferenceEngine& engine_;
     ThreadSafeQueue<cv::Mat>& frame_queue_;
     MqttClient& mqtt_;
+    SpatialCalibrator& calibrator_;
 
     // Camera index used by the producer.
     int camera_index_;
