@@ -2,6 +2,7 @@
 
 #include <fstream>
 #include <sstream>
+#include <cmath>
 
 namespace gema {
 namespace vision {
@@ -41,7 +42,12 @@ bool SpatialCalibrator::load_from_file(const std::string& path)
         size_t start = item.find_first_not_of(" \t\n\r");
         size_t stop  = item.find_last_not_of(" \t\n\r");
         if (start != std::string::npos && stop != std::string::npos) {
-            values.push_back(std::stof(item.substr(start, stop - start + 1)));
+            try {
+                values.push_back(std::stof(item.substr(start, stop - start + 1)));
+            } catch (const std::exception&) {
+                // Malformed entry — NaN, Inf, or non-numeric string.
+                return false;
+            }
         }
     }
 
@@ -62,15 +68,17 @@ bool SpatialCalibrator::load_from_vector(const std::vector<float>& h)
     }
 
     // Validate: determinant must not be zero (degenerate transform).
-    if (std::abs(cv::determinant(H)) < 1e-9) {
+    // Also check for NaN/Inf — cv::determinant(NaN) = NaN, and
+    // NaN < 1e-9 is FALSE, which would incorrectly pass the check.
+    if (!cv::checkRange(H) || std::abs(cv::determinant(H)) < 1e-9) {
         return false;
     }
 
     {
         std::unique_lock lock(mtx_);
         H_ = H.clone();
+        calibrated_.store(true, std::memory_order_release);
     }
-    calibrated_.store(true);
     return true;
 }
 
@@ -131,6 +139,12 @@ cv::Point2f SpatialCalibrator::project(float u, float v) const
 
     double x = (H_.at<double>(0, 0) * u + H_.at<double>(0, 1) * v + H_.at<double>(0, 2)) / w;
     double y = (H_.at<double>(1, 0) * u + H_.at<double>(1, 1) * v + H_.at<double>(1, 2)) / w;
+
+    // Guard against NaN propagation (should not happen after checkRange,
+    // but division by near-zero w could still produce Inf).
+    if (!std::isfinite(x) || !std::isfinite(y)) {
+        return {-1.0f, -1.0f};
+    }
 
     return {static_cast<float>(x), static_cast<float>(y)};
 }

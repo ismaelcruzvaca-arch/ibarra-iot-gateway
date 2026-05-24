@@ -14,23 +14,32 @@ namespace vision {
  *
  * Type parameter T should be cheap to move (e.g. cv::Mat, shared_ptr).
  *
- * ## Thread model
+ * ## Bounded mode
  *
- *   - **Producer(s)** — call push().  Never blocks (unless the queue
- *     grows huge and the system runs out of memory).
- *   - **Consumer**    — call pop() (blocking) or try_pop() (non-blocking).
+ * If `max_size > 0`, the queue drops the oldest item when a new item
+ * is pushed and the queue is full (drop-oldest policy).  This prevents
+ * unbounded memory growth on the RV1106 (128–256 MB RAM) when the
+ * consumer is temporarily slower than the producer.
  *
- * The queue is NOT bounded by design: at 1.5 Hz × 5 seconds of
- * worst-case inference latency we need ≤8 frames of headroom.
- * An unbounded queue eliminates the risk of dropped frames while
- * the orchestrator catches up after a GC / OS scheduling jitter.
+ * ## Shutdown
+ *
+ * Call `shutdown()` to signal that no more items will be pushed.
+ * The consumer will see `pop()` return a default-constructed T after
+ * the queue is drained.  Use `is_shutdown()` to distinguish a
+ * drained queue from a genuine empty frame.
  *
  * @tparam T  Value type stored in the queue.
  */
 template <typename T>
 class ThreadSafeQueue {
 public:
-    ThreadSafeQueue() = default;
+    /**
+     * @param max_size  Maximum number of items.  0 = unbounded.
+     *                  Default: 8 frames at 1.5 Hz × ~5 s latency.
+     */
+    explicit ThreadSafeQueue(size_t max_size = 8) noexcept
+        : max_size_(max_size)
+    {}
 
     // Non-copiable, non-movable (protects the mutex).
     ThreadSafeQueue(const ThreadSafeQueue&) = delete;
@@ -45,14 +54,19 @@ public:
     /**
      * @brief Push an item into the queue.
      *
-     * @param item  Rvalue-reference — moved into the internal container.
+     * If the queue is bounded and full, the oldest item is dropped
+     * (drop-oldest policy).
      *
-     * Thread-safe, never blocks.  Wakes one waiting consumer.
+     * @param item  Rvalue-reference — moved into the internal container.
      */
     void push(T&& item)
     {
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            if (max_size_ > 0 && queue_.size() >= max_size_) {
+                // Drop oldest to make room.
+                queue_.pop();
+            }
             queue_.push(std::move(item));
         }
         cv_.notify_one();
@@ -65,6 +79,9 @@ public:
     {
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            if (max_size_ > 0 && queue_.size() >= max_size_) {
+                queue_.pop();
+            }
             queue_.push(item);
         }
         cv_.notify_one();
@@ -79,8 +96,9 @@ public:
      *
      * @return T  The front item (move-constructed).
      *
-     * This is the primary consumer primitive.  The calling thread
-     * sleeps until push() signals the condition variable.
+     * If the queue has been shut down AND drained, returns a
+     * default-constructed T.  Check `is_shutdown()` to distinguish
+     * from a genuine empty/null item.
      */
     T pop()
     {
@@ -132,6 +150,13 @@ public:
         cv_.notify_all();
     }
 
+    /** @brief True after shutdown() has been called. */
+    bool is_shutdown() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return done_;
+    }
+
     /**
      * @brief Check if the queue is empty.
      */
@@ -155,6 +180,7 @@ private:
     std::condition_variable cv_;
     std::queue<T> queue_;
     bool done_ = false;
+    size_t max_size_;
 };
 
 }  // namespace vision

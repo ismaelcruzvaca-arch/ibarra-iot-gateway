@@ -147,8 +147,8 @@ private:
     std::atomic<Mode>   mode_{Mode::IDLE};
     std::atomic<int>    capture_count_{0};
 
-    // Synchronised by the consumer thread (only infer() touches these).
-    int batch_id_ = 0;
+    // Thread-safe (may be accessed from MQTT callback + consumer thread).
+    std::atomic<int> batch_id_{0};
 
     // Constants.
     static constexpr int    kCaptureLimit  = 200;

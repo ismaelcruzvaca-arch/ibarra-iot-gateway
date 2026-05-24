@@ -27,6 +27,7 @@ add_library(gema_vision_lib
     src/data_collector_engine.cpp
     src/watchdog.cpp
     src/spatial_calibrator.cpp
+    src/thermal_monitor.cpp
 )
 
 target_include_directories(gema_vision_lib

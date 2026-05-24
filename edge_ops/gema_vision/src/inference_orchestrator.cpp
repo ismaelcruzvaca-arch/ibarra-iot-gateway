@@ -1,6 +1,7 @@
 #include "inference_orchestrator.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <ctime>
 #include <iomanip>
 #include <sstream>
@@ -61,7 +62,7 @@ void InferenceOrchestrator::stop()
 }
 
 // ---------------------------------------------------------------------------
-// Consumer loop  (drain pattern — exit ONLY on empty frame after shutdown)
+// Consumer loop
 // ---------------------------------------------------------------------------
 
 void InferenceOrchestrator::consumer_loop()
@@ -70,9 +71,13 @@ void InferenceOrchestrator::consumer_loop()
         // Block until a frame arrives OR shutdown is signalled.
         cv::Mat frame = frame_queue_.pop();
 
-        // If the queue has been shut down AND drained, frame is empty.
-        if (frame.empty()) {
-            break;  // ◀── EXIT CONDITION: nothing left to process
+        // We use a shutdown flag + empty frame: pop() returns a
+        // default-constructed cv::Mat ONLY when done_ is true AND
+        // the queue is drained.  A real empty frame from the camera
+        // would still be a valid cv::Mat with data() == nullptr but
+        // size > 0; such frames are processed normally.
+        if (frame.empty() && frame_queue_.is_shutdown()) {
+            break;  // ◀── EXIT CONDITION: queue drained after shutdown
         }
 
         // --- 1. Run inference ---------------------------------------------
@@ -98,7 +103,11 @@ void InferenceOrchestrator::consumer_loop()
 
         // --- 3. Serialise & publish ---------------------------------------
         std::string json = serialize_to_json(result);
-        mqtt_.publish("novamex/vision/inference", json);
+        if (!mqtt_.publish("novamex/vision/inference", json)) {
+            // Publish failed — MQTT broker unreachable.
+            // The watchdog + systemd Restart= will keep the process alive
+            // until the connection is restored.
+        }
 
         // --- 4. Bookkeeping -----------------------------------------------
         frames_processed_.fetch_add(1);
@@ -113,8 +122,9 @@ std::string InferenceOrchestrator::current_timestamp_iso8601() const
 {
     auto now = std::chrono::system_clock::now();
     auto t_c = std::chrono::system_clock::to_time_t(now);
+    std::tm tm_buf;
     std::ostringstream oss;
-    oss << std::put_time(std::gmtime(&t_c), "%Y-%m-%dT%H:%M:%SZ");
+    oss << std::put_time(gmtime_r(&t_c, &tm_buf), "%Y-%m-%dT%H:%M:%SZ");
     return oss.str();
 }
 
@@ -135,6 +145,13 @@ std::string InferenceOrchestrator::serialize_to_json(
 
     for (size_t i = 0; i < result.primitives.size(); ++i) {
         const auto& p = result.primitives[i];
+
+        // Guard against NaN in physical coordinates (corrupt JSON).
+        float px = std::isfinite(p.physical_coords_mm.x)
+                   ? p.physical_coords_mm.x : -1.0f;
+        float py = std::isfinite(p.physical_coords_mm.y)
+                   ? p.physical_coords_mm.y : -1.0f;
+
         json << "    {\n";
         json << "      \"class_id\": "    << p.class_id    << ",\n";
         json << "      \"confidence\": "  << p.confidence  << ",\n";
@@ -142,8 +159,7 @@ std::string InferenceOrchestrator::serialize_to_json(
              << p.bbox.x << "," << p.bbox.y << ","
              << p.bbox.width << "," << p.bbox.height << "],\n";
         json << "      \"physical_coords_mm\": ["
-             << p.physical_coords_mm.x << ", "
-             << p.physical_coords_mm.y << "],\n";
+             << px << ", " << py << "],\n";
         json << "      \"has_physical_coords\": "
              << (p.has_physical_coords ? "true" : "false") << "\n";
         json << "    }";

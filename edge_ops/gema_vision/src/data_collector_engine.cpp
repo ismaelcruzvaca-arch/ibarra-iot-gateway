@@ -1,7 +1,11 @@
 #include "data_collector_engine.hpp"
 #include "inference_orchestrator.hpp"
 
+#include <fcntl.h>
+#include <unistd.h>
+
 #include <chrono>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <iomanip>
@@ -57,7 +61,7 @@ void DataCollectorEngine::set_mode(Mode new_mode)
     if (new_mode == Mode::CALIBRATION) {
         // Reset capture tracking for this calibration run.
         capture_count_.store(0);
-        ++batch_id_;
+        batch_id_.fetch_add(1);
 
         // Ensure the output directory exists.
         std::filesystem::create_directories(output_dir_);
@@ -95,7 +99,25 @@ void DataCollectorEngine::save_frame(const cv::Mat& frame)
     params.push_back(cv::IMWRITE_JPEG_QUALITY);
     params.push_back(kJpegQuality);
 
-    cv::imwrite(filename, frame, params);
+    if (!cv::imwrite(filename, frame, params)) {
+        // Disk full or path invalid — abort calibration.
+        publish_status("error:write_failed");
+        set_mode(Mode::IDLE);
+        return;
+    }
+
+    // fsync() to ensure data survives a power loss.
+    int fd = ::open(filename.c_str(), O_RDONLY);
+    if (fd >= 0) {
+        ::fsync(fd);
+        ::close(fd);
+    }
+    // Also fsync the directory to ensure the directory entry is persisted.
+    int dir_fd = ::open(output_dir_.c_str(), O_RDONLY | O_DIRECTORY);
+    if (dir_fd >= 0) {
+        ::fsync(dir_fd);
+        ::close(dir_fd);
+    }
 
     // Increment counter.
     int new_count = capture_count_.fetch_add(1) + 1;
@@ -119,20 +141,22 @@ void DataCollectorEngine::save_frame(const cv::Mat& frame)
 
 std::string DataCollectorEngine::build_filename()
 {
-    // Timestamp: YYYYMMDD_HHMMSS
+    // Timestamp: YYYYMMDD_HHMMSS  (thread-safe gmtime_r)
     auto now = std::chrono::system_clock::now();
     auto t_c = std::chrono::system_clock::to_time_t(now);
+    std::tm tm_buf;
     std::ostringstream ts;
-    ts << std::put_time(std::gmtime(&t_c), "%Y%m%d_%H%M%S");
+    ts << std::put_time(gmtime_r(&t_c, &tm_buf), "%Y%m%d_%H%M%S");
 
     // frame_YYYYMMDD_HHMMSS_batch{id}_cap{capture}.jpg
     // capture count guarantees uniqueness even when multiple frames
     // are written within the same clock second.
     int capture = capture_count_.load();
+    int batch   = batch_id_.load();
     std::ostringstream path;
     path << output_dir_
          << "frame_" << ts.str()
-         << "_batch" << batch_id_
+         << "_batch" << batch
          << "_cap" << capture
          << ".jpg";
     return path.str();
@@ -141,7 +165,10 @@ std::string DataCollectorEngine::build_filename()
 void DataCollectorEngine::publish_status(const std::string& message)
 {
     if (mqtt_ != nullptr) {
-        mqtt_->publish(kStatusTopic, message);
+        if (!mqtt_->publish(kStatusTopic, message)) {
+            // Publish failed — log is the best we can do.
+            // The watchdog + systemd Restart=will recover the connection.
+        }
     }
 }
 

@@ -20,6 +20,8 @@ ENV_SRC="/tmp/deploy/gema-vision.env"
 ENV_DST="/etc/gema-vision.env"
 DATA_DIR="/userdata/gema-vision"
 MODEL_DIR="${DATA_DIR}/model"
+CALIB_DIR="/userdata/vision/calibration"
+CONFIG_DIR="/userdata/vision"
 
 echo "=== GEMA Vision — Installation ==="
 
@@ -53,8 +55,8 @@ fi
 
 # --- 4. Data directories ----------------------------------------------------
 echo "Creating data directories: ${DATA_DIR}"
-mkdir -p "$MODEL_DIR"
-chmod 755 "$DATA_DIR" "$MODEL_DIR"
+mkdir -p "$MODEL_DIR" "$CALIB_DIR" "$CONFIG_DIR"
+chmod 755 "$DATA_DIR" "$MODEL_DIR" "$CALIB_DIR" "$CONFIG_DIR"
 
 # --- 5. Enable and start the service ----------------------------------------
 echo "Reloading systemd daemon..."
