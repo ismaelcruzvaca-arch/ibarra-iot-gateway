@@ -11,8 +11,12 @@
  *   3. Verify that the consumer loop correctly processes every frame,
  *      publishes results via MqttClient, and shuts down cleanly
  *      without deadlocks or dropped frames.
+ *
+ * Also validates DataCollectorEngine frame capture, mode switching,
+ * and MQTT status publishing.
  */
 
+#include "data_collector_engine.hpp"
 #include "inference_orchestrator.hpp"
 #include "mock_engine.hpp"
 #include "mock_flash_trigger.hpp"
@@ -24,26 +28,42 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace gema {
 namespace vision {
 
 // ===========================================================================
-// Mock MQTT client — counts publishes
+// Mock MQTT client — counts publishes and captures last topic+payload
 // ===========================================================================
 
 class MockMqttClient final : public MqttClient {
 public:
-    bool publish(const std::string& /*topic*/,
-                 const std::string& /*payload*/) override
+    bool publish(const std::string& topic,
+                 const std::string& payload) override
     {
         publish_count_.fetch_add(1);
+        std::lock_guard<std::mutex> lock(mtx_);
+        last_topic_ = topic;
+        payloads_.push_back(payload);
         return true;
     }
 
+    /** @brief Total number of publish() calls. */
     std::atomic<int> publish_count_{0};
+
+    /** @brief Topic from the most recent publish() call. */
+    std::string last_topic_;
+
+    /** @brief Ordered list of all payloads received. */
+    std::vector<std::string> payloads_;
+
+private:
+    std::mutex mtx_;
 };
 
 // ===========================================================================
@@ -168,6 +188,165 @@ TEST_F(VisionPipelineTest, DoubleStartStopIsIdempotent)
 
     EXPECT_EQ(orchestrator.frames_processed(), 1);
     EXPECT_EQ(mqtt_client.publish_count_.load(), 1);
+}
+
+// ===========================================================================
+// DataCollectorEngine Tests
+// ===========================================================================
+
+/**
+ * @brief Test fixture that provides a temp directory and a fresh engine.
+ *
+ * Each test gets:
+ *   - A unique temporary directory (auto-cleaned on destruction).
+ *   - A DataCollectorEngine pointed at that directory.
+ *   - A MockMqttClient for verifying status messages.
+ */
+class DataCollectorTest : public ::testing::Test {
+protected:
+    void SetUp() override
+    {
+        // Create a unique temp directory for this test.
+        auto tmp = std::filesystem::temp_directory_path();
+        test_dir_ = tmp / "gema_dc_test_XXXXXX";
+        // mkdtemp-like: append a unique suffix.
+        auto uid = std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count());
+        test_dir_ = tmp / ("gema_dc_test_" + uid);
+        std::filesystem::create_directories(test_dir_);
+
+        engine_ = std::make_unique<DataCollectorEngine>(
+            &mqtt_, test_dir_.string());
+    }
+
+    void TearDown() override
+    {
+        engine_.reset();
+        // Clean up temp files.
+        std::filesystem::remove_all(test_dir_);
+    }
+
+    /** @brief Return the number of .jpg files in the test output directory. */
+    int jpeg_count() const
+    {
+        int count = 0;
+        for (auto& entry : std::filesystem::directory_iterator(test_dir_)) {
+            if (entry.path().extension() == ".jpg") {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    std::filesystem::path           test_dir_;
+    MockMqttClient                  mqtt_;
+    std::unique_ptr<DataCollectorEngine> engine_;
+};
+
+// ---------------------------------------------------------------------------
+// Test: IDLE mode discards frames
+// ---------------------------------------------------------------------------
+
+TEST_F(DataCollectorTest, IdleModeDiscardsFrames)
+{
+    ASSERT_EQ(engine_->mode(), DataCollectorEngine::Mode::IDLE);
+
+    cv::Mat dummy = cv::Mat::zeros(640, 480, CV_8UC3);
+    for (int i = 0; i < 5; ++i) {
+        engine_->infer(dummy);
+    }
+
+    EXPECT_EQ(engine_->capture_count(), 0);
+    EXPECT_EQ(jpeg_count(), 0);
+    EXPECT_EQ(mqtt_.publish_count_.load(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Test: CALIBRATION mode saves frames as JPEG
+// ---------------------------------------------------------------------------
+
+TEST_F(DataCollectorTest, CalibrationModeSavesFrames)
+{
+    engine_->set_mode(DataCollectorEngine::Mode::CALIBRATION);
+
+    cv::Mat dummy = cv::Mat::zeros(640, 480, CV_8UC3);
+    for (int i = 0; i < 5; ++i) {
+        engine_->infer(dummy);
+    }
+
+    EXPECT_EQ(engine_->capture_count(), 5);
+    EXPECT_EQ(jpeg_count(), 5);
+
+    // Verify files are valid JPEGs by checking magic bytes.
+    for (auto& entry : std::filesystem::directory_iterator(test_dir_)) {
+        if (entry.path().extension() == ".jpg") {
+            std::ifstream f(entry.path(), std::ios::binary);
+            char magic[2]{};
+            f.read(magic, 2);
+            // JPEG magic: 0xFF 0xD8
+            EXPECT_EQ(static_cast<uint8_t>(magic[0]), 0xFF);
+            EXPECT_EQ(static_cast<uint8_t>(magic[1]), 0xD8);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Test: MQTT status published on start and during capture
+// ---------------------------------------------------------------------------
+
+TEST_F(DataCollectorTest, MqttStatusOnCalibrationStart)
+{
+    engine_->set_mode(DataCollectorEngine::Mode::CALIBRATION);
+
+    ASSERT_GE(mqtt_.publish_count_.load(), 1);
+    EXPECT_EQ(mqtt_.last_topic_, "novamex/vision/status");
+    EXPECT_EQ(mqtt_.payloads_[0], "calibration_started");
+}
+
+// ---------------------------------------------------------------------------
+// Test: Auto-stop at 200 frames
+// ---------------------------------------------------------------------------
+
+TEST_F(DataCollectorTest, AutoStopAtLimit)
+{
+    constexpr int kLimit = 200;
+    engine_->set_mode(DataCollectorEngine::Mode::CALIBRATION);
+
+    cv::Mat dummy = cv::Mat::zeros(640, 480, CV_8UC3);
+    for (int i = 0; i < kLimit + 10; ++i) {
+        engine_->infer(dummy);
+    }
+
+    // Must NOT exceed the limit.
+    EXPECT_EQ(engine_->capture_count(), kLimit);
+    EXPECT_EQ(jpeg_count(), kLimit);
+
+    // Must have auto-returned to IDLE.
+    EXPECT_EQ(engine_->mode(), DataCollectorEngine::Mode::IDLE);
+}
+
+// ---------------------------------------------------------------------------
+// Test: Set mode to CALIBRATION and back to IDLE
+// ---------------------------------------------------------------------------
+
+TEST_F(DataCollectorTest, SetModeBackToIdle)
+{
+    engine_->set_mode(DataCollectorEngine::Mode::CALIBRATION);
+    EXPECT_EQ(engine_->mode(), DataCollectorEngine::Mode::CALIBRATION);
+
+    cv::Mat dummy = cv::Mat::zeros(640, 480, CV_8UC3);
+    engine_->infer(dummy);
+    EXPECT_EQ(engine_->capture_count(), 1);
+
+    engine_->set_mode(DataCollectorEngine::Mode::IDLE);
+    EXPECT_EQ(engine_->mode(), DataCollectorEngine::Mode::IDLE);
+
+    // Subsequent frames should NOT increment the counter.
+    for (int i = 0; i < 5; ++i) {
+        engine_->infer(dummy);
+    }
+    EXPECT_EQ(engine_->capture_count(), 1);
+    EXPECT_EQ(jpeg_count(), 1);
 }
 
 }  // namespace vision

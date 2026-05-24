@@ -24,6 +24,7 @@ find_package(GTest REQUIRED)
 # ---- Library (orchestrator implementation) --------------------------------
 add_library(gema_vision_lib
     src/inference_orchestrator.cpp
+    src/data_collector_engine.cpp
 )
 
 target_include_directories(gema_vision_lib
