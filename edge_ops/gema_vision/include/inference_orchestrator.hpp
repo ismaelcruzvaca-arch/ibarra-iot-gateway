@@ -141,6 +141,12 @@ private:
     /** The main consumer loop executed by the internal thread. */
     void consumer_loop();
 
+    /** @brief Get current UTC time as ISO-8601 string. */
+    std::string current_timestamp_iso8601() const;
+
+    /** @brief Serialise an InferenceResult to a minimal JSON string. */
+    std::string serialize_to_json(const InferenceResult& result) const;
+
     // Dependencies (injected, not owned).
     InferenceEngine& engine_;
     ThreadSafeQueue<cv::Mat>& frame_queue_;

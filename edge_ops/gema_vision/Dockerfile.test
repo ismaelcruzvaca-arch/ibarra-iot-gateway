@@ -1,0 +1,44 @@
+# ============================================================================
+# Dockerfile.test  —  SIL test runner for gema_vision
+#
+# Build & run:
+#   docker build -f Dockerfile.test -t gema-vision-test .
+#   docker run --rm gema-vision-test
+# ============================================================================
+
+FROM ubuntu:22.04 AS builder
+
+# Avoid interactive prompts.
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build toolchain + dependencies.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    libopencv-dev \
+    libgtest-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# GTest sources need to be compiled (Ubuntu ships source-only).
+WORKDIR /tmp/gtest
+RUN cmake /usr/src/googletest -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build . --parallel \
+    && cp lib/*.a /usr/lib/ \
+    && cp -r /usr/src/googletest/googletest/include/gtest /usr/include/ \
+    && cp -r /usr/src/googletest/googlemock/include/gmock /usr/include/
+
+# ---- Build gema_vision ----------------------------------------------------
+WORKDIR /workspace
+
+COPY CMakeLists.txt .
+COPY include/   include/
+COPY src/       src/
+COPY test/      test/
+
+RUN cmake -B build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --parallel
+
+# ---- Run tests ------------------------------------------------------------
+FROM builder AS runner
+WORKDIR /workspace/build
+CMD ctest --output-on-failure -V
