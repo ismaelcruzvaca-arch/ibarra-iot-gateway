@@ -33,9 +33,29 @@
 
 - [x] 1.6 Commit: `feat: Definir contratos abstractos puros para el pipeline de visión C++`
 
-## Fase 2 — Pendiente (próximo sprint)
-- [ ] Implementar MockEngine para SIL tests
+## Fase 2 — SIL Tests + Mocks
+
+- [x] 2.1 Implementar `include/mock_engine.hpp`
+  - Header-only, inline. load_model() → true, infer() → sleep(20ms) + 2 primitivas estáticas
+
+- [x] 2.2 Implementar `include/mock_flash_trigger.hpp`
+  - Header-only, inline. wait_for_flash() → sleep(666ms) ≈ 90 golpes/min
+
+- [x] 2.3 Implementar `src/inference_orchestrator.cpp`
+  - consumer_loop con patrón de drenado (sale solo cuando pop() devuelve frame vacío tras shutdown)
+  - JSON mínimo serializado y publicado por MQTT
+
+- [x] 2.4 Crear `test/test_vision_pipeline.cpp`
+  - 4 tests GTest: ConsumerProcessesAllFrames ✅, NoFramesNoCrash ✅, MockEngineReturnsTwoPrimitives ✅, DoubleStartStopIsIdempotent ✅
+  - 100% passed, 0 failed
+
+- [x] 2.5 Crear `CMakeLists.txt` + `Dockerfile.test`
+  - Build y test en container Ubuntu 22.04 con GTest + OpenCV
+
+- [x] 2.6 Commit: `test: Implementar entorno SIL con Mocks para el pipeline de visión C++`
+
+## Fase 3 — Pendiente
 - [ ] Implementar RknnContext (NPU real)
 - [ ] Implementar FlashTrigger (GPIO /dev/gpiochip)
-- [ ] Implementar consumer_loop en InferenceOrchestrator.cpp
-- [ ] SIL tests con GTest
+- [ ] Integración con cámara real (V4L2)
+- [ ] Benchmark de throughput en RV1106
