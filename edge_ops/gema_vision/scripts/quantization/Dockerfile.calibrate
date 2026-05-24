@@ -1,0 +1,78 @@
+# ============================================================================
+# Dockerfile.calibrate  —  RKNN Quantization Environment
+#
+# Hermetic build container for converting ONNX models to INT8-quantized
+# .rknn binaries targeting the Rockchip RV1106 / RV1103 NPU.
+#
+# Build:
+#   docker build -f Dockerfile.calibrate -t gema-calibrate .
+#
+# Run (mount workspace containing onnx + dataset):
+#   docker run --rm                       \
+#       -v $(pwd):/workspace              \
+#       gema-calibrate                    \
+#       --onnx    model/yolov5n.onnx      \
+#       --dataset dataset/dataset.txt     \
+#       --output  model/yolov5n.rknn
+# ============================================================================
+
+FROM ubuntu:20.04
+
+LABEL maintainer="GEMA Vision Team"
+LABEL description="RKNN quantization environment for RV1106"
+
+# Avoid interactive prompts.
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# ---- System dependencies ------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    python3.8 \
+    python3.8-dev \
+    python3-pip \
+    wget \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Make python3.8 the default python3.
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.8 1
+
+# ---- Install rknn-toolkit2 ----------------------------------------------
+# The rknn-toolkit2 wheel is downloaded from the official Rockchip SDK
+# distribution (Zbox file server with fetch code "rknn").
+#
+# If the download URL changes, update RKNN_WHEEL_URL below, or place the
+# .whl file in packages/ and uncomment the COPY line instead.
+#
+# Supported Python / Ubuntu matrix:
+#   Ubuntu 18.04  → Python 3.6 / 3.7
+#   Ubuntu 20.04  → Python 3.8 / 3.9   ← THIS IMAGE
+#   Ubuntu 22.04  → Python 3.10 / 3.11
+
+ARG RKNN_WHEEL_URL=https://github.com/airockchip/rknn-toolkit2/releases/download/v1.6.0/rknn_toolkit2-1.6.0+81f21f4d-cp38-cp38-linux_x86_64.whl
+
+# Alternative: copy from local packages/ directory
+# COPY packages/rknn_toolkit2*.whl /tmp/rknn_wheel.whl
+
+RUN wget -q --show-progress -O /tmp/rknn_wheel.whl "${RKNN_WHEEL_URL}" || \
+    echo "WARNING: Could not download rknn-toolkit2 wheel from ${RKNN_WHEEL_URL}" && \
+    echo "Place the wheel in packages/ and rebuild with: docker build --build-arg RKNN_WHEEL_URL= ..."
+
+RUN pip3 install --no-cache-dir /tmp/rknn_wheel.whl && \
+    rm -f /tmp/rknn_wheel.whl
+
+# Verify installation.
+RUN python3 -c "from rknn.api import RKNN; print('rknn-toolkit2 ready')"
+
+# ---- Entry point --------------------------------------------------------
+WORKDIR /workspace
+COPY calibrate.py /usr/local/bin/calibrate.py
+RUN chmod +x /usr/local/bin/calibrate.py
+
+ENTRYPOINT ["python3", "/usr/local/bin/calibrate.py"]
