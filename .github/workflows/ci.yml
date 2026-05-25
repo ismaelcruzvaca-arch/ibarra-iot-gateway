@@ -62,7 +62,7 @@ jobs:
               -DUSE_MOCK_PRODUCER=ON \
               -DCMAKE_BUILD_TYPE=Debug \
               -S /workspace/edge_ops/gema_vision && \
-            cmake --build build_test -j\$(nproc)"
+            cmake --build build_test -j\$(nproc) --verbose 2>&1"
 
       - name: Run SIL tests
         run: |

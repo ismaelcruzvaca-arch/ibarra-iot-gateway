@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstddef>
 #include <memory>
+#include <thread>
 #include <vector>
 
 namespace gema {
