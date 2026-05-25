@@ -1,0 +1,14 @@
+# Dataset generation
+Pillow>=10.0.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+tqdm>=4.65.0
+fonttools>=4.42.0
+
+# Training (Phase 2)
+torch>=2.0.0
+torchvision>=0.15.0
+tensorboard>=2.13.0
+
+# RKNN conversion (Phase 3) — requires Python 3.6-3.11 on Ubuntu x86_64
+# rknn-toolkit2>=1.6.0  # uncomment in Docker build environment

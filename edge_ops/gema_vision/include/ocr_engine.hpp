@@ -88,15 +88,34 @@ private:
 /**
  * @brief OCR engine using LPRNet on the RV1106 NPU.
  *
- * Expects an RKNN-quantized LPRNet model with a 38-class output
- * (0-9, A-Z sans I/O, /, -, :).
+ * Expects an RKNN-quantized LPRNet model with a 20-class output
+ * (19 active chars: 0-9, /, :, L, O, T, E, V, N, C; blank at index 19).
  *
  * The RKNN context is injected from outside (it is shared with the
  * YOLO engine via the dual-context pattern).  This class only
  * manages the LPRNet-specific input/output tensor setup.
+ *
+ * ## Character mapping
+ *
+ * 19 active characters + 1 blank = 20 total classes.
+ * Index 19 is the CTC blank token (not a real character).
  */
 class LprnetOcrEngine final : public OcrEngine {
 public:
+    /** 19 active characters + 1 blank = 20 total classes.
+     *  Index 19 is the CTC blank token (not a real character). */
+    static constexpr char kCharMap[20] = {
+        '0','1','2','3','4','5','6','7','8','9',  // 0-9
+        '/',':',                                     // 10-11
+        'L','O','T','E','V','N','C',                // 12-18
+        '\0'                                         // 19 = blank (unused)
+    };
+    static constexpr int kNumClasses = 20;
+    static constexpr int kBlankIdx = 19;
+    static constexpr int kInputWidth = 94;
+    static constexpr int kInputHeight = 24;
+    static constexpr int kTimesteps = 18;
+
     /**
      * @param rknn_context  Pre-initialized RKNN context (set up by
      *                      main.cpp at boot).
@@ -110,6 +129,20 @@ public:
     std::string_view name() const override { return "lprnet"; }
 
 private:
+    /** @brief Greedy CTC decode.
+     *
+     *  Takes flat logits array [timesteps * num_classes] and decodes using
+     *  argmax + blank-skip + collapse-repeats rules.
+     *
+     *  @param logits     Flat float array, row-major [T, C].
+     *  @param timesteps  Number of timesteps (T).
+     *  @param num_classes Number of classes (C).
+     *  @return           Decoded UTF-8 string.
+     */
+    static std::string greedy_ctc_decode(const float* logits,
+                                         int timesteps,
+                                         int num_classes);
+
     void* ctx_;  ///< Opaque rknn_context handle.
 };
 
