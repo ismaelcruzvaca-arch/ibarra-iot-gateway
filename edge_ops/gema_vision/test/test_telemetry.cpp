@@ -220,34 +220,9 @@ TEST(TelemetryFpsTest, CalculatesFpsFromFrameDelta)
 
     EXPECT_GT(fps, 0.0) << "FPS should be positive when frames were produced";
 }
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-    collector.start();
-    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
-    collector.stop();
-    harness.orchestrator.stop();
-
-    ASSERT_GE(harness.mqtt.publish_count_.load(), 1);
-
-    std::string payload;
-    {
-        std::lock_guard<std::mutex> lock(harness.mqtt.mtx_);
-        payload = harness.mqtt.last_payload_;
-    }
-
-    // Check FPS is positive (we produced frames, interval is 1s)
-    auto fps_pos = payload.find("\"fps\":");
-    ASSERT_NE(fps_pos, std::string::npos);
-
-    // Extract the fps value
-    auto after_key = fps_pos + 6;  // past "fps":
-    auto comma = payload.find(',', after_key);
-    std::string fps_str = payload.substr(after_key, comma - after_key);
-    double fps = std::stod(fps_str);
-
-    EXPECT_GT(fps, 0.0) << "FPS should be positive when frames were produced";
-}
-
+// ===========================================================================
+// 4. Graceful shutdown while sleeping
 // ===========================================================================
 // 4. Graceful shutdown while sleeping
 // ===========================================================================
