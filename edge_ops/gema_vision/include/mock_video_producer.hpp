@@ -251,14 +251,14 @@ private:
     {
         constexpr int kNumBars = 7;
         int bar_width = frame.cols / kNumBars;
-        const cv::Scalar bars[kNumBars] = {
-            cv::Scalar(180, 180, 180),  // Light grey (white with margin)
-            cv::Scalar(0,   255, 255),  // Yellow
-            cv::Scalar(255, 255, 0),    // Cyan
-            cv::Scalar(0,   255, 0),    // Green
-            cv::Scalar(255, 0,   255),  // Magenta
-            cv::Scalar(0,   0,   180),  // Red (darker)
-            cv::Scalar(180, 0,   0),    // Blue (darker)
+        const cv::Vec3b bars[kNumBars] = {
+            cv::Vec3b(180, 180, 180),  // Light grey (white with margin)
+            cv::Vec3b(0,   255, 255),  // Yellow
+            cv::Vec3b(255, 255, 0),    // Cyan
+            cv::Vec3b(0,   255, 0),    // Green
+            cv::Vec3b(255, 0,   255),  // Magenta
+            cv::Vec3b(0,   0,   180),  // Red (darker)
+            cv::Vec3b(180, 0,   0),    // Blue (darker)
         };
         for (int r = 0; r < frame.rows; ++r) {
             for (int c = 0; c < frame.cols; ++c) {
@@ -311,10 +311,10 @@ private:
         std::chrono::microseconds total,
         const std::atomic<bool>& running)
     {
-        constexpr auto kChunk = std::chrono::milliseconds(100);
+        constexpr auto kChunkUs = std::chrono::microseconds(100'000);  // 100 ms
         auto remaining = total;
         while (remaining > std::chrono::microseconds::zero() && running.load()) {
-            auto sleep_for = std::min(remaining, kChunk);
+            auto sleep_for = remaining < kChunkUs ? remaining : kChunkUs;
             std::this_thread::sleep_for(sleep_for);
             remaining -= sleep_for;
         }

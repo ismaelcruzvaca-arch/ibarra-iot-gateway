@@ -67,7 +67,7 @@ namespace {
     std::atomic<bool> g_shutdown{false};
 }  // anonymous namespace
 
-extern "C" void signal_handler(int sig)
+extern "C" void signal_handler(int /*sig*/)
 {
     // write() is async-signal-safe — std::cerr is NOT.
     const char msg[] = "[gema-vision] Signal received — shutting down\n";
