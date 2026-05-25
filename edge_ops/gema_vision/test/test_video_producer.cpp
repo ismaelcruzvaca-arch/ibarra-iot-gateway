@@ -314,17 +314,17 @@ TEST_F(MockProducerTest, AllPatternsRender)
         ASSERT_TRUE(frame_opt.has_value());
         ASSERT_NE(*frame_opt, nullptr);
 
-        // Top-left cell (offset 0,0) should be black (all zeros).
-        cv::Vec3b black = (*frame_opt)->at<cv::Vec3b>(0, 0);
-        EXPECT_EQ(black[0], 0);
-        EXPECT_EQ(black[1], 0);
-        EXPECT_EQ(black[2], 0);
+        // Cell (0,0): cell_row=0, cell_col=0 → (0+0)%2==0 → WHITE
+        cv::Vec3b top_left = (*frame_opt)->at<cv::Vec3b>(0, 0);
+        EXPECT_EQ(top_left[0], 255);
+        EXPECT_EQ(top_left[1], 255);
+        EXPECT_EQ(top_left[2], 255);
 
-        // Adjacent cell to the right (offset 32, 0) should be white.
-        cv::Vec3b white = (*frame_opt)->at<cv::Vec3b>(0, 32);
-        EXPECT_EQ(white[0], 255);
-        EXPECT_EQ(white[1], 255);
-        EXPECT_EQ(white[2], 255);
+        // Cell (0,32): cell_row=0, cell_col=1 → (0+1)%2==1 → BLACK
+        cv::Vec3b adjacent = (*frame_opt)->at<cv::Vec3b>(0, 32);
+        EXPECT_EQ(adjacent[0], 0);
+        EXPECT_EQ(adjacent[1], 0);
+        EXPECT_EQ(adjacent[2], 0);
     }
 }
 
