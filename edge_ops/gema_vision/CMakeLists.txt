@@ -68,19 +68,6 @@ if(USE_MOCK_PRODUCER)
     target_compile_definitions(gema-vision PRIVATE USE_MOCK_PRODUCER=1)
 endif()
 
-if(QEMU_TEST_MODE)
-    # QEMU_TEST_MODE forces mock implementations for ALL targets when
-    # compiling SIL tests for armhf under QEMU user-mode emulation.
-    # No hardware (NPU, RGA, camera) is available in CI, so every
-    # component must use its mock variant regardless of __arm__.
-    target_compile_definitions(gema_vision_lib PRIVATE QEMU_TEST_MODE=1)
-    target_compile_definitions(gema-vision PRIVATE QEMU_TEST_MODE=1)
-    target_compile_definitions(gema-ota PRIVATE QEMU_TEST_MODE=1)
-    target_compile_definitions(test_vision_pipeline PRIVATE QEMU_TEST_MODE=1)
-    target_compile_definitions(test_watchdog PRIVATE QEMU_TEST_MODE=1)
-    target_compile_definitions(test_ota PRIVATE QEMU_TEST_MODE=1)
-    target_compile_definitions(test_video_producer PRIVATE QEMU_TEST_MODE=1)
-endif()
 
 target_link_libraries(gema-vision
     PRIVATE
@@ -233,4 +220,21 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(test_telemetry PRIVATE
         -Wall -Wextra -Wpedantic -Werror
     )
+endif()
+
+# ---- QEMU test mode (force mocks on ALL targets) --------------------------
+# This block MUST appear AFTER all targets are defined.
+# QEMU_TEST_MODE forces mock implementations for every component so that
+# SIL binaries can run without physical hardware (NPU, RGA, camera).
+# In native x86_64 builds, this is a no-op (USE_MOCK_PRODUCER already ON).
+# In armhf builds under QEMU, it prevents crashes from missing hardware.
+if(QEMU_TEST_MODE)
+    target_compile_definitions(gema_vision_lib PRIVATE QEMU_TEST_MODE=1)
+    target_compile_definitions(gema-vision PRIVATE QEMU_TEST_MODE=1)
+    target_compile_definitions(gema-ota PRIVATE QEMU_TEST_MODE=1)
+    target_compile_definitions(test_vision_pipeline PRIVATE QEMU_TEST_MODE=1)
+    target_compile_definitions(test_watchdog PRIVATE QEMU_TEST_MODE=1)
+    target_compile_definitions(test_ota PRIVATE QEMU_TEST_MODE=1)
+    target_compile_definitions(test_video_producer PRIVATE QEMU_TEST_MODE=1)
+    target_compile_definitions(test_telemetry PRIVATE QEMU_TEST_MODE=1)
 endif()
