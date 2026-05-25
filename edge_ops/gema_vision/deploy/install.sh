@@ -53,12 +53,36 @@ if [ -f "$ENV_SRC" ]; then
     chmod 600 "$ENV_DST"  # may contain secrets (MQTT passwords)
 fi
 
-# --- 4. Data directories ----------------------------------------------------
-echo "Creating data directories: ${DATA_DIR}"
-mkdir -p "$MODEL_DIR" "$CALIB_DIR" "$CONFIG_DIR"
-chmod 755 "$DATA_DIR" "$MODEL_DIR" "$CALIB_DIR" "$CONFIG_DIR"
+# --- 4. OTA agent -----------------------------------------------------------
+OTA_BIN_SRC="/tmp/deploy/gema-ota"
+OTA_BIN_DST="/userdata/bin/gema-ota"
+OTA_SERVICE_SRC="/tmp/deploy/gema-ota.service"
+OTA_SERVICE_DST="/etc/systemd/system/gema-ota.service"
 
-# --- 5. Enable and start the service ----------------------------------------
+if [ -f "$OTA_BIN_SRC" ]; then
+    echo "Installing OTA agent binary: ${OTA_BIN_DST}"
+    mkdir -p "/userdata/bin"
+    cp "$OTA_BIN_SRC" "$OTA_BIN_DST"
+    chmod 755 "$OTA_BIN_DST"
+else
+    echo "WARNING: OTA agent binary not found at ${OTA_BIN_SRC}"
+    echo "  Build it first with:  cmake -B build && cmake --build build"
+fi
+
+if [ -f "$OTA_SERVICE_SRC" ]; then
+    echo "Installing OTA service: ${OTA_SERVICE_DST}"
+    cp "$OTA_SERVICE_SRC" "$OTA_SERVICE_DST"
+    chmod 644 "$OTA_SERVICE_DST"
+else
+    echo "WARNING: OTA service file not found at ${OTA_SERVICE_SRC}"
+fi
+
+# --- 5. Data directories ----------------------------------------------------
+echo "Creating data directories: ${DATA_DIR}"
+mkdir -p "$MODEL_DIR" "$CALIB_DIR" "$CONFIG_DIR" "/userdata/ota_tmp" "/backup"
+chmod 755 "$DATA_DIR" "$MODEL_DIR" "$CALIB_DIR" "$CONFIG_DIR" "/userdata/ota_tmp" "/backup"
+
+# --- 6. Enable and start the services ---------------------------------------
 echo "Reloading systemd daemon..."
 systemctl daemon-reload
 
@@ -68,7 +92,13 @@ systemctl enable gema-vision
 echo "Starting gema-vision..."
 systemctl start gema-vision
 
-# --- 6. Verify --------------------------------------------------------------
+echo "Enabling gema-ota (auto-start on boot)..."
+systemctl enable gema-ota
+
+echo "Starting gema-ota..."
+systemctl start gema-ota
+
+# --- 7. Verify --------------------------------------------------------------
 echo ""
 echo "=== Status ==="
 systemctl status gema-vision --no-pager || true

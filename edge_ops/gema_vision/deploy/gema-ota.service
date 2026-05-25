@@ -1,0 +1,55 @@
+# ============================================================================
+# gema-ota.service  —  GEMA Vision OTA Update Agent
+#
+# Installed at:  /etc/systemd/system/gema-ota.service
+# Binary:        /userdata/bin/gema-ota
+#
+# ## Design rationale
+#
+#   Type=simple         — the process runs in the foreground; systemd
+#                         manages it as a simple daemon.
+#   Restart=on-failure  — restart on crash but NOT on successful exit
+#                         (successful exit is intentional — e.g. update
+#                         completed and we want a clean state).
+#   RestartSec=10       — 10-second cooldown to avoid restart storms.
+#   OOMScoreAdjust=-900 — lower priority than gema-vision (-1000).
+#                         If memory pressure hits, the OTA agent is
+#                         killed BEFORE the vision pipeline.
+#   LimitNOFILE=1024    — enough for FIFO + logging.
+#
+# ## Dependencies
+#
+#   After=network-online.target  — OTA downloads require network access.
+# ============================================================================
+
+[Unit]
+Description=GEMA Vision OTA Update Agent — RV1106
+Documentation=https://github.com/ibarra-iot-gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# Paths
+ExecStart=/userdata/bin/gema-ota
+WorkingDirectory=/userdata/ota_tmp
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+StartLimitInterval=300
+StartLimitBurst=5
+
+# OOM protection — lower priority than gema-vision (-1000).
+OOMScoreAdjust=-900
+
+# File descriptor limit (FIFO, log, lock)
+LimitNOFILE=1024
+
+# Standard I/O goes to journald
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

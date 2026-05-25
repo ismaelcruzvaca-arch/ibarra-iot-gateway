@@ -90,6 +90,40 @@ target_link_libraries(test_watchdog
         GTest::Main
 )
 
+# ---- OTA agent binary -----------------------------------------------------
+add_executable(gema-ota
+    src/ota_manager.cpp
+    src/main_ota.cpp
+)
+
+target_include_directories(gema-ota
+    PRIVATE include
+)
+
+target_link_libraries(gema-ota
+    PRIVATE
+        gema_vision_lib
+        ${OpenCV_LIBS}
+)
+
+# ---- SIL tests: OTA -------------------------------------------------------
+add_executable(test_ota
+    src/ota_manager.cpp
+    test/test_ota.cpp
+)
+
+target_include_directories(test_ota
+    PRIVATE include
+)
+
+target_link_libraries(test_ota
+    PRIVATE
+        gema_vision_lib
+        ${OpenCV_LIBS}
+        GTest::GTest
+        GTest::Main
+)
+
 # ---- Register tests with CTest --------------------------------------------
 enable_testing()
 add_test(NAME VisionPipeline
@@ -97,6 +131,9 @@ add_test(NAME VisionPipeline
 )
 add_test(NAME Watchdog
     COMMAND test_watchdog
+)
+add_test(NAME OtaAgent
+    COMMAND test_ota
 )
 
 # ---- Compiler warnings ----------------------------------------------------
@@ -111,6 +148,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         -Wall -Wextra -Wpedantic -Werror
     )
     target_compile_options(gema-vision PRIVATE
+        -Wall -Wextra -Wpedantic -Werror
+    )
+    target_compile_options(gema-ota PRIVATE
+        -Wall -Wextra -Wpedantic -Werror
+    )
+    target_compile_options(test_ota PRIVATE
         -Wall -Wextra -Wpedantic -Werror
     )
 endif()
