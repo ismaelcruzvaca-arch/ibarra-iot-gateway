@@ -5,8 +5,10 @@
 
 #include "config_manager.hpp"
 
+#include <cstdio>   // std::rename
 #include <fstream>
 #include <sstream>
+#include <unistd.h> // ::sync()
 
 namespace gema {
 namespace vision {
