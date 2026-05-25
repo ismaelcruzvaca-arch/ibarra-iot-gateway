@@ -75,6 +75,27 @@ struct VisualPrimitive {
      * When `false`, `physical_coords_mm` MUST be ignored by consumers.
      */
     bool has_physical_coords = false;
+
+    // ------------------------------------------------------------------
+    // Post-processing (populated by PostProcessDispatcher)
+    // ------------------------------------------------------------------
+
+    /**
+     * @brief OCR result text (class_id == 1).
+     *
+     * Empty string if no OCR was performed or the text could not be read.
+     */
+    std::string ocr_text;
+
+    /**
+     * @brief Color validation result (class_id == 2 or 1).
+     *
+     * - `color_pass == true`  → colour matches the reference within tolerance.
+     * - `color_pass == false` → colour does NOT match (possible reject).
+     *
+     * Only meaningful when `has_physical_coords == true` (calibrator ran).
+     */
+    bool color_pass = false;
 };
 
 /**

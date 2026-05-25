@@ -19,11 +19,13 @@ InferenceOrchestrator::InferenceOrchestrator(
     ThreadSafeQueue<cv::Mat>& frame_queue,
     MqttClient& mqtt,
     SpatialCalibrator& calibrator,
+    PostProcessDispatcher& dispatcher,
     int camera_index) noexcept
     : engine_(engine)
     , frame_queue_(frame_queue)
     , mqtt_(mqtt)
     , calibrator_(calibrator)
+    , dispatcher_(dispatcher)
     , camera_index_(camera_index)
 {}
 
@@ -85,6 +87,9 @@ void InferenceOrchestrator::consumer_loop()
 
         // --- 1b. Spatial calibration (pixel → mm via homography) ----------
         calibrator_.apply_batch(primitives);
+
+        // --- 1c. Post-processing (OCR + colour validation) ----------------
+        dispatcher_.process(primitives, frame);
 
         // --- 2. Build structured result -----------------------------------
         InferenceResult result;
@@ -161,7 +166,11 @@ std::string InferenceOrchestrator::serialize_to_json(
         json << "      \"physical_coords_mm\": ["
              << px << ", " << py << "],\n";
         json << "      \"has_physical_coords\": "
-             << (p.has_physical_coords ? "true" : "false") << "\n";
+             << (p.has_physical_coords ? "true" : "false") << ",\n";
+        json << "      \"ocr_text\": \""
+             << p.ocr_text << "\",\n";
+        json << "      \"color_pass\": "
+             << (p.color_pass ? "true" : "false") << "\n";
         json << "    }";
         if (i + 1 < result.primitives.size()) {
             json << ",";

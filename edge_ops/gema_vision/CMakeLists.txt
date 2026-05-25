@@ -28,6 +28,9 @@ add_library(gema_vision_lib
     src/watchdog.cpp
     src/spatial_calibrator.cpp
     src/thermal_monitor.cpp
+    src/color_validator.cpp
+    src/postproc_dispatcher.cpp
+    src/lprnet_ocr_engine.cpp
 )
 
 target_include_directories(gema_vision_lib

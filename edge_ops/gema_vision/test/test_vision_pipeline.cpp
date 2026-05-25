@@ -16,10 +16,13 @@
  * and MQTT status publishing.
  */
 
+#include "color_validator.hpp"
 #include "data_collector_engine.hpp"
 #include "inference_orchestrator.hpp"
 #include "mock_engine.hpp"
 #include "mock_flash_trigger.hpp"
+#include "ocr_engine.hpp"
+#include "postproc_dispatcher.hpp"
 #include "spatial_calibrator.hpp"
 #include "thread_safe_queue.hpp"
 #include "visual_primitive.hpp"
@@ -75,19 +78,18 @@ class VisionPipelineTest : public ::testing::Test {
 protected:
     void SetUp() override
     {
-        // Reset state before each test.
         publish_count_ = 0;
     }
 
-    void TearDown() override
-    {
-        // Orchestrator is destroyed automatically.
-    }
+    void TearDown() override {}
 
     std::atomic<int> publish_count_{0};
 
     // Uncalibrated calibrator (no H loaded — no-op by design).
     SpatialCalibrator calibrator_;
+
+    // No-op dispatcher (no OCR/color engines configured).
+    PostProcessDispatcher dispatcher_{nullptr, nullptr};
 };
 
 // ===========================================================================
@@ -107,7 +109,7 @@ TEST_F(VisionPipelineTest, ConsumerProcessesAllFrames)
     // MockFlashTrigger is exercised by the producer (separate test);
     // here we test the consumer in isolation.
 
-    InferenceOrchestrator orchestrator(engine, queue, mqtt_client, calibrator_);
+    InferenceOrchestrator orchestrator(engine, queue, mqtt_client, calibrator_, dispatcher_);
 
     // ---- Act -------------------------------------------------------------
     orchestrator.start();
@@ -140,7 +142,7 @@ TEST_F(VisionPipelineTest, NoFramesNoCrash)
     MockEngine              engine(20);
     MockMqttClient          mqtt_client;
 
-    InferenceOrchestrator orchestrator(engine, queue, mqtt_client, calibrator_);
+    InferenceOrchestrator orchestrator(engine, queue, mqtt_client, calibrator_, dispatcher_);
 
     orchestrator.start();
     // Push nothing — queue stays empty.
@@ -179,7 +181,7 @@ TEST_F(VisionPipelineTest, DoubleStartStopIsIdempotent)
     MockEngine              engine(5);
     MockMqttClient          mqtt_client;
 
-    InferenceOrchestrator orchestrator(engine, queue, mqtt_client, calibrator_);
+    InferenceOrchestrator orchestrator(engine, queue, mqtt_client, calibrator_, dispatcher_);
 
     // Start twice.
     orchestrator.start();
@@ -535,6 +537,139 @@ TEST_F(SpatialCalibratorTest, LoadFromFileNotFound)
     SpatialCalibrator cal;
     EXPECT_FALSE(cal.load_from_file("/nonexistent/config.json"));
     EXPECT_FALSE(cal.is_calibrated());
+}
+
+// ===========================================================================
+// Post-Processing Tests
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Test: OcrFilter — MockOcrEngine returns canned text
+// ---------------------------------------------------------------------------
+
+TEST(PostProcessTest, MockOcrEngineReturnsCannedText)
+{
+    MockOcrEngine ocr("LOTE-2405");
+    EXPECT_EQ(ocr.name(), "mock_ocr");
+    EXPECT_TRUE(ocr.load_model("dummy.rknn"));
+
+    cv::Mat dummy_roi = cv::Mat::zeros(24, 94, CV_8UC3);
+    std::string text = ocr.infer(dummy_roi);
+    EXPECT_EQ(text, "LOTE-2405");
+}
+
+// ---------------------------------------------------------------------------
+// Test: MockOcrEngine configurable canned text
+// ---------------------------------------------------------------------------
+
+TEST(PostProcessTest, MockOcrEngineConfigurable)
+{
+    MockOcrEngine ocr("VENCE-2026");
+    cv::Mat dummy_roi = cv::Mat::zeros(24, 94, CV_8UC3);
+    EXPECT_EQ(ocr.infer(dummy_roi), "VENCE-2026");
+
+    ocr.set_canned("2026-05-24");
+    EXPECT_EQ(ocr.infer(dummy_roi), "2026-05-24");
+}
+
+// ---------------------------------------------------------------------------
+// Test: ColorValidator — glare masking prevents false negatives
+// ---------------------------------------------------------------------------
+
+TEST(PostProcessTest, ColorValidatorGlareMasking)
+{
+    ColorValidator cv;
+    cv.configure(2,  // class_id = COLOR_ZONE
+                 0, 10,   // red low range
+                 170, 180, // red high range
+                 70, 50,  // sat_min, val_min
+                 0.80f);   // pass_ratio
+
+    // Create a mostly-red ROI (300x300 with a 100x100 white glare spot).
+    cv::Mat roi(300, 300, CV_8UC3, cv::Scalar(0, 0, 200));  // BGR = dark red
+    // Add a white glare patch (simulates specular reflection on plastic).
+    roi(cv::Rect(100, 100, 100, 100)) = cv::Scalar(255, 255, 255);
+
+    auto result = cv.validate(roi);
+
+    // The glare should be masked so the red pixels dominate → PASS.
+    EXPECT_TRUE(result.pass) << "Glare should be masked, ratio=" << result.ratio;
+    EXPECT_FALSE(result.skipped);
+}
+
+// ---------------------------------------------------------------------------
+// Test: ColorValidator — all-white ROI skipped (excessive glare)
+// ---------------------------------------------------------------------------
+
+TEST(PostProcessTest, ColorValidatorAllWhiteIsSkipped)
+{
+    ColorValidator cv;
+    cv.configure(2, 0, 10, 170, 180, 70, 50, 0.80f);
+
+    cv::Mat roi(100, 100, CV_8UC3, cv::Scalar(255, 255, 255));  // pure white
+
+    auto result = cv.validate(roi);
+    EXPECT_TRUE(result.skipped);
+    EXPECT_EQ(result.skip_reason, "excessive_glare");
+}
+
+// ---------------------------------------------------------------------------
+// Test: ColorValidator — unconfigured class passes by default (safety)
+// ---------------------------------------------------------------------------
+
+TEST(PostProcessTest, ColorValidatorUnconfiguredPasses)
+{
+    ColorValidator cv;  // no configure() call
+    cv::Mat roi(100, 100, CV_8UC3, cv::Scalar(0, 0, 200));
+
+    auto result = cv.validate(roi);
+    EXPECT_TRUE(result.pass);   // safety: unconfigured → pass
+    EXPECT_TRUE(result.skipped);
+}
+
+// ---------------------------------------------------------------------------
+// Test: PostProcessDispatcher dispatches OCR + color by class_id
+// ---------------------------------------------------------------------------
+
+TEST(PostProcessTest, DispatcherRoutesByClassId)
+{
+    MockOcrEngine   ocr("LOTE-001");
+    ColorValidator  cv;
+    cv.configure(1, 0, 10, 170, 180, 70, 50, 0.80f);
+    cv.configure(2, 0, 10, 170, 180, 70, 50, 0.80f);
+
+    PostProcessDispatcher dispatcher(&ocr, &cv);
+
+    // Build a batch with one primitive of each class.
+    cv::Mat frame(480, 640, CV_8UC3, cv::Scalar(0, 0, 200));
+    PrimitiveBatch batch;
+
+    VisualPrimitive defect;
+    defect.class_id = 0;
+    defect.bbox = cv::Rect(10, 10, 50, 50);
+    batch.push_back(std::move(defect));
+
+    VisualPrimitive ocr_zone;
+    ocr_zone.class_id = 1;
+    ocr_zone.bbox = cv::Rect(100, 100, 94, 24);
+    batch.push_back(std::move(ocr_zone));
+
+    VisualPrimitive color_zone;
+    color_zone.class_id = 2;
+    color_zone.bbox = cv::Rect(200, 200, 100, 100);
+    batch.push_back(std::move(color_zone));
+
+    dispatcher.process(batch, frame);
+
+    // class_id=0: no post-processing.
+    EXPECT_TRUE(batch[0].ocr_text.empty());
+
+    // class_id=1: OCR + colour.
+    EXPECT_EQ(batch[1].ocr_text, "LOTE-001");
+
+    // class_id=2: colour only.
+    EXPECT_TRUE(batch[2].ocr_text.empty());
+    EXPECT_TRUE(batch[2].color_pass);
 }
 
 }  // namespace vision
