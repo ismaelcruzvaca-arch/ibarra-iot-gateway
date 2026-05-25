@@ -194,9 +194,8 @@ private:
     }
 
     /** @brief Fill frame with a cycling solid colour. */
-    static void paint_solid_color(cv::Mat& frame)
+    void paint_solid_color(cv::Mat& frame)
     {
-        static int color_index = 0;
         const cv::Scalar colors[] = {
             cv::Scalar(0, 0, 255),     // R
             cv::Scalar(0, 255, 0),     // G
@@ -205,18 +204,17 @@ private:
             cv::Scalar(255, 255, 0),   // C
             cv::Scalar(255, 0, 255),   // M
         };
-        cv::Scalar color = colors[color_index % 6];
-        ++color_index;
+        cv::Scalar color = colors[color_index_ % 6];
+        ++color_index_;
         frame.setTo(color);
     }
 
     /** @brief Horizontal colour sweep that shifts each invocation. */
-    static void paint_gradient(cv::Mat& frame)
+    void paint_gradient(cv::Mat& frame)
     {
-        static int shift = 0;
         for (int r = 0; r < frame.rows; ++r) {
             for (int c = 0; c < frame.cols; ++c) {
-                uchar val = static_cast<uchar>((c + shift) % 256);
+                uchar val = static_cast<uchar>((c + shift_) % 256);
                 frame.at<cv::Vec3b>(r, c) = cv::Vec3b(
                     val,                     // B
                     static_cast<uchar>(255 - val),  // G
@@ -224,7 +222,7 @@ private:
                 );
             }
         }
-        shift = (shift + 5) % 256;
+        shift_ = (shift_ + 5) % 256;
     }
 
     /** @brief Uniform random noise. */
@@ -330,6 +328,8 @@ private:
     std::atomic<bool>                                 running_{false};
     std::atomic<uint64_t>                             frames_produced_{0};
     int                                               pattern_index_{0};
+    int                                               color_index_{0};   // cycling colour for paint_solid_color
+    int                                               shift_{0};         // horizontal sweep for paint_gradient
     double                                            frame_rate_;
     std::chrono::microseconds                         interval_;
     std::mutex                                        interval_mutex_;
