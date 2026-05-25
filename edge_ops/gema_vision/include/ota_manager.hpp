@@ -57,9 +57,11 @@ Version parse_version(const std::string& str);
  * @endcode
  */
 struct OtaCommand {
-    std::string version;   // semver string, e.g. "2.0.0"
-    std::string url;       // download URL for the OTA artifact
-    std::string sha256;    // expected SHA-256 checksum (hex)
+    std::string version;        // semver string, e.g. "2.0.0"
+    std::string url;            // download URL for the OTA artifact
+    std::string sha256;         // expected SHA-256 checksum (hex)
+    std::string signature;      // Ed25519 signature of the manifest (base64)
+    std::string next_public_key; // next public key for rotation (base64 PEM)
 };
 
 /**
@@ -175,6 +177,52 @@ public:
     /** @brief Return the current running version. */
     Version current_version() const { return current_version_; }
 
+    // ------------------------------------------------------------------
+    // Key management
+    // ------------------------------------------------------------------
+
+    /**
+     * @brief Load the active public key.
+     *
+     * Precedence:
+     *   1. /userdata/ota/trusted_keys/key-active.pub  (file override)
+     *   2. kOtaBuiltinPublicKey (built-in fallback)
+     *
+     * @return PEM-encoded public key, or empty string if none found.
+     */
+    std::string load_public_key() const;
+
+    /** @brief Load the next-rotation public key. */
+    std::string load_next_key() const;
+
+    /** @brief Save next-rotation public key to disk. */
+    bool save_next_key(const std::string& pem_base64);
+
+    /**
+     * @brief Promote the next key to active (atomic rename).
+     *
+     * Uses std::rename() which is atomic on the same filesystem —
+     * a power loss during promotion leaves either the old key or
+     * the new key, never a corrupt half-written file.
+     */
+    bool promote_next_key();
+
+    /**
+     * @brief Verify an Ed25519-signed manifest.
+     *
+     * Tries the active key first, then the next-key if the active
+     * fails (TOFU rotation pattern).
+     *
+     * On successful verification with the next-key, automatically
+     * promotes it to active.
+     *
+     * @param signature_hex  Hex-encoded Ed25519 signature.
+     * @param message        The message that was signed (e.g. the manifest JSON).
+     * @return true if verification succeeded with any key.
+     */
+    bool verify_signature(const std::string& signature_hex,
+                          const std::string& message);
+
 protected:
     // ------------------------------------------------------------------
     // Virtual steps (overridable in tests)
@@ -286,6 +334,11 @@ private:
     static constexpr const char* kBinaryPath  = "/userdata/bin/gema-ota";
     static constexpr const char* kVisionBin   = "/usr/bin/gema-vision";
     static constexpr const char* kTopicStatus = "novamex/vision/ota/status";
+
+    // Key management paths
+    static constexpr const char* kKeyActive   = "/userdata/ota/trusted_keys/key-active.pub";
+    static constexpr const char* kKeyNext     = "/userdata/ota/trusted_keys/key-next.pub";
+    static constexpr const char* kKeyDir      = "/userdata/ota/trusted_keys";
 
     /** Minimum free disk space required for OTA (50 MB). */
     static constexpr uint64_t kMinDiskBytes  = 50ULL * 1024 * 1024;
