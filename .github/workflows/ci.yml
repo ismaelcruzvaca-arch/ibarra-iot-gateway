@@ -54,7 +54,7 @@ jobs:
             -t ${{ env.DOCKER_BUILD_IMAGE }} \
             .
 
-      - name: Cross-compile test binaries (native x86_64, QEMU_TEST_MODE)
+      - name: Build & test (single container — build dir persists)
         run: |
           docker run --rm ${{ env.DOCKER_BUILD_IMAGE }} \
             sh -c "cmake -B build_test \
@@ -62,12 +62,8 @@ jobs:
               -DUSE_MOCK_PRODUCER=ON \
               -DCMAKE_BUILD_TYPE=Debug \
               -S /workspace/edge_ops/gema_vision && \
-            cmake --build build_test -j\$(nproc) --verbose 2>&1"
-
-      - name: Run SIL tests
-        run: |
-          docker run --rm ${{ env.DOCKER_BUILD_IMAGE }} \
-            sh -c "ctest --test-dir build_test --output-on-failure -j\$(nproc)"
+            cmake --build build_test -j\$(nproc) && \
+            ctest --test-dir build_test --output-on-failure -j\$(nproc)"
 
       - name: Cross-compile production ARM binary (if toolchain available)
         if: github.event_name == 'workflow_dispatch'
