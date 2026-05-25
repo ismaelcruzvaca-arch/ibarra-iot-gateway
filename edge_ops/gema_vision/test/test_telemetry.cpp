@@ -11,6 +11,7 @@
  */
 
 #include "inference_orchestrator.hpp"
+#include "mock_engine.hpp"
 #include "telemetry_collector.hpp"
 #include "thermal_monitor.hpp"
 #include "thread_safe_queue.hpp"
@@ -81,22 +82,6 @@ struct TelemetryTestHarness {
 // ===========================================================================
 // 1. JSON payload format
 // ===========================================================================
-
-TEST(TelemetryPayloadTest, FormatIsStrictJson)
-{
-    TelemetryCollector collector(
-        *reinterpret_cast<MqttClient*>(nullptr),  // never called
-        *reinterpret_cast<InferenceOrchestrator*>(nullptr),  // never called
-        *reinterpret_cast<ThreadSafeQueue<std::shared_ptr<cv::Mat>>*>(nullptr),
-        *reinterpret_cast<ThermalMonitor*>(nullptr));
-
-    // Use reflection to test the private method via a friend approach:
-    // we test it through the public interface in the integration test.
-    // This unit test verifies JSON structure manually.
-
-    // Instead, we build a string via the public path below.
-    SUCCEED() << "JSON format tested in TelemetryCollectorIntegrationTest";
-}
 
 TEST(TelemetryPayloadTest, JsonHasAllRequiredFields)
 {
