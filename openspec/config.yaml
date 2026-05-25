@@ -1,0 +1,78 @@
+# openspec/config.yaml
+schema: spec-driven
+
+context: |
+  Tech stack: C++17 with CMake 3.16+, cross-compiled for Rockchip RV1106 (armhf, uClibc, 128MB RAM).
+  Sub-stack: Python 3 calibration/quantization scripts (opencv-python, numpy).
+  Legacy: Node.js 20/24 edge services (MQTT → SQLite → Hasura GraphQL).
+  Architecture: Clean RAII + DI + Producer-Consumer threading model in gema::vision namespace.
+  Patterns: Dependency injection via virtual interfaces (InferenceEngine, OcrEngine, FlashTrigger);
+  SIL testing via MockEngine/MockOcrEngine/MockFlashTrigger; FramePool ring-buffer for heap-frag avoidance;
+  PostProcessDispatcher chain-of-responsibility for OCR/color; Ed25519-signed OTA state machine.
+  Testing: GTest + GMock for SIL tests; Dockerfile.test for CI; Dockerfile.systemd for integration tests.
+  Style: -Wall -Wextra -Wpedantic -Werror; Namespace gema::vision; #pragma once; doxygen-style docs.
+
+strict_tdd: true
+
+testing:
+  strict_tdd: true
+  detected: "2026-05-25"
+  runner:
+    command: "cmake --build build && ctest --output-on-failure -V"
+    framework: GTest (Google Test + Google Mock)
+    build_system: CMake + CTest
+  layers:
+    - layer: Unit
+      available: true
+      tool: GTest (individual test executables)
+    - layer: SIL Integration
+      available: true
+      tool: GTest (vision_pipeline, watchdog, ota)
+    - layer: Python Integration
+      available: true
+      tool: pytest (via opencv-python, numpy)
+    - layer: Systemd Integration
+      available: true
+      tool: Dockerfile.systemd + test_restart.sh
+    - layer: E2E
+      available: false
+      tool: null
+  coverage:
+    available: false
+    command: "--"
+  quality:
+    linter:
+      available: true
+      command: "-Wall -Wextra -Wpedantic -Werror (compiler flags)"
+    type_checker:
+      available: false
+      command: "--"
+    formatter:
+      available: false
+      command: "clang-format (available but not enforced)"
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Identify affected modules/packages (gema_vision lib, binaries, deploy)
+  specs:
+    - Use Given/When/Then format for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include thread-architecture diagrams for multi-threaded components
+    - Document failure modes and safety properties
+    - Document RV1106-specific constraints (128MB RAM, uClibc, no RTC battery)
+  tasks:
+    - Group tasks by phase (infrastructure, implementation, testing)
+    - Use hierarchical numbering (1.1, 1.2, etc.)
+    - Keep tasks small enough to complete in one session
+  apply:
+    - Follow RAII, DI, Producer-Consumer patterns
+    - Load C++17/CMake/GTest skills
+    - Ensure all new code compiles with -Wall -Wextra -Wpedantic -Werror
+  verify:
+    - Run `cmake --build build && ctest --output-on-failure -V`
+    - Compare implementation against every spec scenario
+    - Verify no new compiler warnings
+  archive:
+    - Warn before merging destructive deltas (large removals)

@@ -16,7 +16,7 @@ namespace vision {
 
 InferenceOrchestrator::InferenceOrchestrator(
     InferenceEngine& engine,
-    ThreadSafeQueue<cv::Mat>& frame_queue,
+    ThreadSafeQueue<std::shared_ptr<cv::Mat>>& frame_queue,
     MqttClient& mqtt,
     SpatialCalibrator& calibrator,
     PostProcessDispatcher& dispatcher,
@@ -71,25 +71,28 @@ void InferenceOrchestrator::consumer_loop()
 {
     while (true) {
         // Block until a frame arrives OR shutdown is signalled.
-        cv::Mat frame = frame_queue_.pop();
+        auto frame_ptr = frame_queue_.pop();
 
-        // We use a shutdown flag + empty frame: pop() returns a
-        // default-constructed cv::Mat ONLY when done_ is true AND
-        // the queue is drained.  A real empty frame from the camera
-        // would still be a valid cv::Mat with data() == nullptr but
-        // size > 0; such frames are processed normally.
-        if (frame.empty() && frame_queue_.is_shutdown()) {
+        // When shutdown is signalled and the queue is drained, pop()
+        // returns a default-constructed shared_ptr (nullptr).
+        if (!frame_ptr && frame_queue_.is_shutdown()) {
             break;  // ◀── EXIT CONDITION: queue drained after shutdown
         }
 
+        // Skip a null frame that arrived before shutdown (should not
+        // happen in practice, but defensive).
+        if (!frame_ptr) {
+            continue;
+        }
+
         // --- 1. Run inference ---------------------------------------------
-        PrimitiveBatch primitives = engine_.infer(frame);
+        PrimitiveBatch primitives = engine_.infer(*frame_ptr);
 
         // --- 1b. Spatial calibration (pixel → mm via homography) ----------
         calibrator_.apply_batch(primitives);
 
         // --- 1c. Post-processing (OCR + colour validation) ----------------
-        dispatcher_.process(primitives, frame);
+        dispatcher_.process(primitives, *frame_ptr);
 
         // --- 2. Build structured result -----------------------------------
         InferenceResult result;
@@ -116,6 +119,13 @@ void InferenceOrchestrator::consumer_loop()
 
         // --- 4. Bookkeeping -----------------------------------------------
         frames_processed_.fetch_add(1);
+
+        // Track cumulative defect count + last defect timestamp.
+        if (result.defect_count > 0) {
+            defects_total_.fetch_add(result.defect_count);
+            last_defect_epoch_.store(
+                static_cast<uint64_t>(std::time(nullptr)));
+        }
     }
 }
 

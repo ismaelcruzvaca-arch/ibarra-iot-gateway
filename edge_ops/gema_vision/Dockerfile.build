@@ -1,0 +1,110 @@
+# ============================================================================
+# Dockerfile.build  —  GEMA Vision Pipeline Cross-Compilation Environment
+#
+# Multi-stage Docker image for building the RV1106 vision pipeline.
+#
+# Stage 1: compile GTest for armhf/uClibc
+# Stage 2: full SDK + GTest = ready for cmake --build
+#
+# Build:
+#   docker build -f Dockerfile.build -t gema-builder .
+#
+# Cross-compile:
+#   docker run --rm gema-builder \
+#       cmake -B build \
+#           -DCMAKE_TOOLCHAIN_FILE=toolchain-arm-rockchip.cmake \
+#           -DQEMU_TEST_MODE=ON \
+#           -DUSE_MOCK_PRODUCER=ON \
+#           -DGTEST_ROOT=/opt/arm-gtest
+#
+# Run SIL tests under QEMU:
+#   docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+#   docker run --rm gema-builder \
+#       sh -c "cd /build && ctest --test-dir build"
+#
+# Produce release binary:
+#   docker run --rm gema-builder \
+#       cmake -B build_prod \
+#           -DCMAKE_TOOLCHAIN_FILE=toolchain-arm-rockchip.cmake \
+#           -DQEMU_TEST_MODE=OFF \
+#           -DUSE_MOCK_PRODUCER=OFF \
+#           -DCMAKE_BUILD_TYPE=Release
+#   docker cp $(docker create --rm gema-builder):/build_prod/gema-vision .
+# ============================================================================
+
+# ---- Stage 1: Cross-compile GTest for armhf --------------------------------
+FROM luckfoxtech/luckfox_pico:1.0 AS gtest-builder
+
+WORKDIR /opt
+
+# Set up the Luckfox toolchain environment
+ENV LUCKFOX_SDK_PATH=/home/sdk
+ENV PATH="${LUCKFOX_SDK_PATH}/tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf/bin:${PATH}"
+
+# Install build tools needed for GTest
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake \
+    make \
+    ca-certificates \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone and cross-compile GTest
+RUN git clone --depth 1 --branch v1.15.2 https://github.com/google/googletest.git && \
+    cd googletest && \
+    cmake -B build \
+        -DCMAKE_C_COMPILER=arm-rockchip830-linux-uclibcgnueabihf-gcc \
+        -DCMAKE_CXX_COMPILER=arm-rockchip830-linux-uclibcgnueabihf-g++ \
+        -DCMAKE_SYSTEM_NAME=Linux \
+        -DCMAKE_SYSTEM_PROCESSOR=arm \
+        -DCMAKE_CXX_FLAGS="-march=armv7-a -mtune=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard" \
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+        -DBUILD_GMOCK=OFF \
+        -DINSTALL_GTEST=ON \
+        -DCMAKE_INSTALL_PREFIX=/opt/arm-gtest \
+        . && \
+    cmake --build build -j$(nproc) && \
+    cmake --install build && \
+    rm -rf /opt/googletest
+
+# ---- Stage 2: Full build environment ---------------------------------------
+FROM luckfoxtech/luckfox_pico:1.0
+
+WORKDIR /workspace
+
+# Copy cross-compiled GTest from Stage 1
+COPY --from=gtest-builder /opt/arm-gtest /opt/arm-gtest
+
+# Set up toolchain environment variables
+ENV LUCKFOX_SDK_PATH=/home/sdk
+ENV PATH="${LUCKFOX_SDK_PATH}/tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf/bin:${PATH}"
+ENV GTEST_ROOT=/opt/arm-gtest
+ENV OpenCV_DIR="${LUCKFOX_SDK_PATH}/media/opencv-mobile/lib/cmake/opencv4"
+
+# Install additional build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake \
+    make \
+    file \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the project source (or use -v mount at runtime)
+COPY . /workspace
+
+# Default command: build everything
+CMD ["sh", "-c", "\
+    cmake -B build_test \
+        -DCMAKE_TOOLCHAIN_FILE=toolchain-arm-rockchip.cmake \
+        -DQEMU_TEST_MODE=ON \
+        -DUSE_MOCK_PRODUCER=ON \
+        -DGTEST_ROOT=/opt/arm-gtest \
+        -DCMAKE_BUILD_TYPE=Debug && \
+    cmake --build build_test -j$(nproc) && \
+    cmake -B build_prod \
+        -DCMAKE_TOOLCHAIN_FILE=toolchain-arm-rockchip.cmake \
+        -DQEMU_TEST_MODE=OFF \
+        -DUSE_MOCK_PRODUCER=OFF \
+        -DGTEST_ROOT=/opt/arm-gtest \
+        -DCMAKE_BUILD_TYPE=MinSizeRel && \
+    cmake --build build_prod -j$(nproc) \
+"]

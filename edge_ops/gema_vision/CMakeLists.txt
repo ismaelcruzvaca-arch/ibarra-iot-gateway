@@ -17,6 +17,18 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# ---- Options ---------------------------------------------------------------
+option(USE_MOCK_PRODUCER
+    "Use MockVideoProducer instead of RgaVideoProducer for gema-vision"
+    ON)
+
+option(QEMU_TEST_MODE
+    "Force mock implementations for all hardware (NPU, RGA, camera) even
+     when compiling for armhf. Required for running armhf SIL tests under
+     QEMU user-mode emulation in CI, where no physical Rockchip hardware
+     is available."
+    OFF)
+
 # ---- Dependencies ---------------------------------------------------------
 find_package(OpenCV REQUIRED)
 find_package(GTest REQUIRED)
@@ -31,6 +43,7 @@ add_library(gema_vision_lib
     src/color_validator.cpp
     src/postproc_dispatcher.cpp
     src/lprnet_ocr_engine.cpp
+    src/telemetry_collector.cpp
 )
 
 target_include_directories(gema_vision_lib
@@ -50,6 +63,24 @@ add_executable(gema-vision
 target_include_directories(gema-vision
     PRIVATE include
 )
+
+if(USE_MOCK_PRODUCER)
+    target_compile_definitions(gema-vision PRIVATE USE_MOCK_PRODUCER=1)
+endif()
+
+if(QEMU_TEST_MODE)
+    # QEMU_TEST_MODE forces mock implementations for ALL targets when
+    # compiling SIL tests for armhf under QEMU user-mode emulation.
+    # No hardware (NPU, RGA, camera) is available in CI, so every
+    # component must use its mock variant regardless of __arm__.
+    target_compile_definitions(gema_vision_lib PRIVATE QEMU_TEST_MODE=1)
+    target_compile_definitions(gema-vision PRIVATE QEMU_TEST_MODE=1)
+    target_compile_definitions(gema-ota PRIVATE QEMU_TEST_MODE=1)
+    target_compile_definitions(test_vision_pipeline PRIVATE QEMU_TEST_MODE=1)
+    target_compile_definitions(test_watchdog PRIVATE QEMU_TEST_MODE=1)
+    target_compile_definitions(test_ota PRIVATE QEMU_TEST_MODE=1)
+    target_compile_definitions(test_video_producer PRIVATE QEMU_TEST_MODE=1)
+endif()
 
 target_link_libraries(gema-vision
     PRIVATE
@@ -124,8 +155,48 @@ target_link_libraries(test_ota
         GTest::Main
 )
 
+# ---- SIL tests: VideoProducer -------------------------------------------
+add_executable(test_video_producer
+    test/test_video_producer.cpp
+)
+
+target_include_directories(test_video_producer
+    PRIVATE include
+)
+
+target_link_libraries(test_video_producer
+    PRIVATE
+        gema_vision_lib
+        ${OpenCV_LIBS}
+        GTest::GTest
+        GTest::Main
+)
+
+# ---- SIL tests: Telemetry -----------------------------------------------
+add_executable(test_telemetry
+    test/test_telemetry.cpp
+)
+
+target_include_directories(test_telemetry
+    PRIVATE include
+)
+
+target_link_libraries(test_telemetry
+    PRIVATE
+        gema_vision_lib
+        ${OpenCV_LIBS}
+        GTest::GTest
+        GTest::Main
+)
+
 # ---- Register tests with CTest --------------------------------------------
 enable_testing()
+add_test(NAME VideoProducer
+    COMMAND test_video_producer
+)
+add_test(NAME Telemetry
+    COMMAND test_telemetry
+)
 add_test(NAME VisionPipeline
     COMMAND test_vision_pipeline
 )
@@ -154,6 +225,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         -Wall -Wextra -Wpedantic -Werror
     )
     target_compile_options(test_ota PRIVATE
+        -Wall -Wextra -Wpedantic -Werror
+    )
+    target_compile_options(test_video_producer PRIVATE
+        -Wall -Wextra -Wpedantic -Werror
+    )
+    target_compile_options(test_telemetry PRIVATE
         -Wall -Wextra -Wpedantic -Werror
     )
 endif()

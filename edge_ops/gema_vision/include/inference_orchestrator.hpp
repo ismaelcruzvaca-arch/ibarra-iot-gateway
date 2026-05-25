@@ -65,8 +65,8 @@ struct InferenceResult {
  *
  * Owns the **consumer thread** in the Producer-Consumer pair:
  *
- *   1. Reads a frame from ThreadSafeQueue<cv::Mat> (pushed by the
- *      GPIO-driven producer).
+ *   1. Reads a frame from ThreadSafeQueue<std::shared_ptr<cv::Mat>>
+ *      (pushed by the producer).
  *   2. Passes the frame through InferenceEngine → PrimitiveBatch.
  *   3. Post-processes each primitive (defect counting, colour
  *      classification, OCR — delegated to strategy objects).
@@ -97,7 +97,7 @@ public:
      */
     InferenceOrchestrator(
         InferenceEngine& engine,
-        ThreadSafeQueue<cv::Mat>& frame_queue,
+        ThreadSafeQueue<std::shared_ptr<cv::Mat>>& frame_queue,
         MqttClient& mqtt,
         SpatialCalibrator& calibrator,
         PostProcessDispatcher& dispatcher,
@@ -141,6 +141,20 @@ public:
     /** @brief Total frames processed since start(). */
     uint64_t frames_processed() const noexcept { return frames_processed_.load(); }
 
+    /** @brief Cumulative defects detected across all frames. */
+    uint64_t defects_total() const noexcept { return defects_total_.load(); }
+
+    /**
+     * @brief Unix epoch seconds of the most recently detected defect.
+     *
+     * Returns 0 if no defect has been detected yet.
+     * Convert to ISO-8601 with gmtime_r() at display time.
+     */
+    uint64_t last_defect_epoch() const noexcept
+    {
+        return last_defect_epoch_.load();
+    }
+
 private:
     /** The main consumer loop executed by the internal thread. */
     void consumer_loop();
@@ -153,7 +167,7 @@ private:
 
     // Dependencies (injected, not owned).
     InferenceEngine& engine_;
-    ThreadSafeQueue<cv::Mat>& frame_queue_;
+    ThreadSafeQueue<std::shared_ptr<cv::Mat>>& frame_queue_;
     MqttClient& mqtt_;
     SpatialCalibrator& calibrator_;
     PostProcessDispatcher& dispatcher_;
@@ -165,6 +179,10 @@ private:
     std::unique_ptr<std::thread> consumer_thread_;
     std::atomic<bool> running_{false};
     std::atomic<uint64_t> frames_processed_{0};
+
+    // Cumulative defect tracking (read by TelemetryCollector).
+    std::atomic<uint64_t> defects_total_{0};
+    std::atomic<uint64_t> last_defect_epoch_{0};
 };
 
 }  // namespace vision

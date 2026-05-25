@@ -18,6 +18,7 @@
 
 #include "color_validator.hpp"
 #include "data_collector_engine.hpp"
+#include "frame_pool.hpp"
 #include "inference_orchestrator.hpp"
 #include "mock_engine.hpp"
 #include "mock_flash_trigger.hpp"
@@ -34,12 +35,78 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
 
 namespace gema {
 namespace vision {
+
+// ===========================================================================
+// FramePool tests — acquire_shared() with custom deleter
+// ===========================================================================
+
+class FramePoolTest : public ::testing::Test {
+protected:
+    FramePool pool_{640, 480, CV_8UC3};
+};
+
+TEST_F(FramePoolTest, AcquireSharedReturnsValidBuffer)
+{
+    auto frame = pool_.acquire_shared();
+    ASSERT_NE(frame, nullptr);
+    EXPECT_EQ(frame->rows, 480);
+    EXPECT_EQ(frame->cols, 640);
+    EXPECT_EQ(frame->type(), CV_8UC3);
+}
+
+TEST_F(FramePoolTest, AcquireSharedReleasesOnScopeExit)
+{
+    size_t acquired_count = 0;
+    {
+        auto frame = pool_.acquire_shared();
+        ASSERT_NE(frame, nullptr);
+        // Count how many buffers we can acquire after this one goes out
+        // of scope — the custom deleter should release it.
+    }
+    // After scope exit, the buffer should be available again.
+    // Acquire all 4 pool buffers — should succeed without spinning.
+    for (size_t i = 0; i < FramePool::kPoolSize; ++i) {
+        auto frame = pool_.acquire_shared();
+        ASSERT_NE(frame, nullptr);
+        ++acquired_count;
+    }
+    EXPECT_EQ(acquired_count, FramePool::kPoolSize);
+}
+
+TEST_F(FramePoolTest, AcquireSharedMultipleAreDistinct)
+{
+    auto a = pool_.acquire_shared();
+    auto b = pool_.acquire_shared();
+    ASSERT_NE(a, nullptr);
+    ASSERT_NE(b, nullptr);
+    // Pointers must be distinct (different pool slots).
+    EXPECT_NE(a.get(), b.get());
+}
+
+TEST_F(FramePoolTest, CustomDeleterReturnsBufferToPool)
+{
+    // Acquire all 4 buffers.
+    std::vector<std::shared_ptr<cv::Mat>> frames;
+    for (size_t i = 0; i < FramePool::kPoolSize; ++i) {
+        frames.push_back(pool_.acquire_shared());
+    }
+    ASSERT_EQ(frames.size(), FramePool::kPoolSize);
+
+    // Release one by resetting.
+    frames[0].reset();
+    // Now we should be able to acquire one more (the released slot).
+    auto recycled = pool_.acquire_shared();
+    ASSERT_NE(recycled, nullptr);
+    EXPECT_EQ(recycled->rows, 480);
+    EXPECT_EQ(recycled->cols, 640);
+}
 
 // ===========================================================================
 // Mock MQTT client — counts publishes and captures last topic+payload
@@ -103,9 +170,9 @@ TEST_F(VisionPipelineTest, ConsumerProcessesAllFrames)
     constexpr int kMockLatencyMs    = 20;   // per-frame NPU simulation
     constexpr int kProcessingBudget = 500;  // ms safety margin
 
-    ThreadSafeQueue<cv::Mat> queue;
-    MockEngine              engine(kMockLatencyMs);
-    MockMqttClient          mqtt_client;
+    ThreadSafeQueue<std::shared_ptr<cv::Mat>> queue;
+    MockEngine                               engine(kMockLatencyMs);
+    MockMqttClient                           mqtt_client;
     // MockFlashTrigger is exercised by the producer (separate test);
     // here we test the consumer in isolation.
 
@@ -116,7 +183,7 @@ TEST_F(VisionPipelineTest, ConsumerProcessesAllFrames)
 
     // Inject frames from the test thread (simulating the GPIO producer).
     for (int i = 0; i < kNumFrames; ++i) {
-        queue.push(cv::Mat::zeros(640, 480, CV_8UC3));
+        queue.push(std::make_shared<cv::Mat>(cv::Mat::zeros(640, 480, CV_8UC3)));
     }
 
     // Wait for all frames to be consumed.
@@ -138,9 +205,9 @@ TEST_F(VisionPipelineTest, ConsumerProcessesAllFrames)
 
 TEST_F(VisionPipelineTest, NoFramesNoCrash)
 {
-    ThreadSafeQueue<cv::Mat> queue;
-    MockEngine              engine(20);
-    MockMqttClient          mqtt_client;
+    ThreadSafeQueue<std::shared_ptr<cv::Mat>> queue;
+    MockEngine                               engine(20);
+    MockMqttClient                           mqtt_client;
 
     InferenceOrchestrator orchestrator(engine, queue, mqtt_client, calibrator_, dispatcher_);
 
@@ -177,9 +244,9 @@ TEST_F(VisionPipelineTest, MockEngineReturnsTwoPrimitives)
 
 TEST_F(VisionPipelineTest, DoubleStartStopIsIdempotent)
 {
-    ThreadSafeQueue<cv::Mat> queue;
-    MockEngine              engine(5);
-    MockMqttClient          mqtt_client;
+    ThreadSafeQueue<std::shared_ptr<cv::Mat>> queue;
+    MockEngine                               engine(5);
+    MockMqttClient                           mqtt_client;
 
     InferenceOrchestrator orchestrator(engine, queue, mqtt_client, calibrator_, dispatcher_);
 
@@ -187,7 +254,7 @@ TEST_F(VisionPipelineTest, DoubleStartStopIsIdempotent)
     orchestrator.start();
     orchestrator.start();  // second start MUST be a no-op.
 
-    queue.push(cv::Mat::zeros(640, 480, CV_8UC3));
+    queue.push(std::make_shared<cv::Mat>(cv::Mat::zeros(640, 480, CV_8UC3)));
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     orchestrator.stop();
     orchestrator.stop();  // second stop MUST be a no-op (no crash).

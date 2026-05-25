@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <mutex>
 #include <optional>
@@ -55,7 +56,8 @@ public:
      * @brief Push an item into the queue.
      *
      * If the queue is bounded and full, the oldest item is dropped
-     * (drop-oldest policy).
+     * (drop-oldest policy).  Dropped frames are counted in
+     * dropped_count().
      *
      * @param item  Rvalue-reference — moved into the internal container.
      */
@@ -64,8 +66,8 @@ public:
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (max_size_ > 0 && queue_.size() >= max_size_) {
-                // Drop oldest to make room.
                 queue_.pop();
+                dropped_count_.fetch_add(1, std::memory_order_relaxed);
             }
             queue_.push(std::move(item));
         }
@@ -81,6 +83,7 @@ public:
             std::lock_guard<std::mutex> lock(mutex_);
             if (max_size_ > 0 && queue_.size() >= max_size_) {
                 queue_.pop();
+                dropped_count_.fetch_add(1, std::memory_order_relaxed);
             }
             queue_.push(item);
         }
@@ -175,12 +178,19 @@ public:
         return queue_.size();
     }
 
+    /** @brief Total frames dropped due to queue overflow (drop-oldest). */
+    uint64_t dropped_count() const noexcept
+    {
+        return dropped_count_.load(std::memory_order_relaxed);
+    }
+
 private:
     mutable std::mutex mutex_;
     std::condition_variable cv_;
     std::queue<T> queue_;
     bool done_ = false;
     size_t max_size_;
+    std::atomic<uint64_t> dropped_count_{0};
 };
 
 }  // namespace vision

@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <memory>
 #include <vector>
 
 namespace gema {
@@ -74,6 +75,34 @@ public:
             // never happen with 4 buffers at 1.5 Hz.
             std::this_thread::yield();
         }
+    }
+
+    /**
+     * @brief Acquire a buffer as a shared_ptr with automatic release.
+     *
+     * Calls acquire() to get an available index, then wraps the buffer
+     * in a std::shared_ptr whose custom deleter calls release(index)
+     * when the refcount drops to zero.  This eliminates the need for
+     * the consumer to call pool_.release() manually — the shared_ptr
+     * handles it automatically.
+     *
+     * The shared_ptr uses aliasing: the control block manages the
+     * deleter callback, NOT the cv::Mat memory (the pool owns the
+     * buffer permanently).  No heap alloc/free in the hot path beyond
+     * the shared_ptr control block itself (~32 bytes).
+     *
+     * @return std::shared_ptr<cv::Mat> pointing into the pool.
+     *         Never null — acquire() spins until a slot is free.
+     */
+    std::shared_ptr<cv::Mat> acquire_shared()
+    {
+        size_t idx = acquire();
+        return std::shared_ptr<cv::Mat>(
+            &pool_[idx],
+            [this, idx](cv::Mat*) {
+                this->release(idx);
+            }
+        );
     }
 
     /**
