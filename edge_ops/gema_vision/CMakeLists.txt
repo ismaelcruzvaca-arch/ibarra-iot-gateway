@@ -125,6 +125,16 @@ target_link_libraries(gema-ota
         ${OpenCV_LIBS}
 )
 
+# ---- Hardware diagnostics binary (FAT suite) -------------------------------
+add_executable(gema-hw-diag
+    src/gema-hw-diag.cpp
+)
+
+target_link_libraries(gema-hw-diag
+    PRIVATE
+        ${CMAKE_DL_LIBS}  # dlopen/dlsym on Linux
+)
+
 # ---- SIL tests: OTA -------------------------------------------------------
 add_executable(test_ota
     src/ota_manager.cpp
@@ -219,6 +229,9 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         -Wall -Wextra -Wpedantic -Werror
     )
     target_compile_options(test_telemetry PRIVATE
+        -Wall -Wextra -Wpedantic -Werror
+    )
+    target_compile_options(gema-hw-diag PRIVATE
         -Wall -Wextra -Wpedantic -Werror
     )
 endif()
