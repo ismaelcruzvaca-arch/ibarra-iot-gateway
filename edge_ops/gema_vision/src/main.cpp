@@ -35,6 +35,7 @@
  *       the WDT resets the entire board after ~15 s.
  */
 
+#include "config_manager.hpp"
 #include "frame_pool.hpp"
 #include "inference_orchestrator.hpp"
 #include "data_collector_engine.hpp"
@@ -185,17 +186,22 @@ int main(int, char**)
     // ---- Thermal monitor -------------------------------------------------
     auto thermal = std::make_unique<gema::vision::ThermalMonitor>();
 
+    // ---- Config manager (RCU-based hot-reload) ---------------------------
+    auto config = std::make_unique<gema::vision::ConfigManager>();
+
     // ---- Telemetry collector (publishes every 30 s) ----------------------
     auto telemetry = std::make_unique<gema::vision::TelemetryCollector>(
         *mqtt, *orchestrator, *queue, *thermal);
 
     // ---- Start sequence --------------------------------------------------
-    // Order: watchdog → producer → orchestrator → telemetry.
+    // Order: watchdog → producer → orchestrator → telemetry → config.
     // (watchdog already started above.)
+    // Config starts last so all pipeline components exist before we load.
 
     producer->start();
     orchestrator->start();
     telemetry->start();
+    config->start();
 
     // ---- Log startup -----------------------------------------------------
     {
@@ -214,12 +220,13 @@ int main(int, char**)
     }
 
     // ---- Shutdown sequence (REVERSE order) --------------------------------
-    // producer → orchestrator → telemetry → watchdog.
+    // producer → orchestrator → telemetry → config → watchdog.
     //
-    // 1. producer.stop()    — stop filling the queue (close the valve)
-    // 2. orchestrator.stop() — drain remaining frames + queue.shutdown()
-    // 3. telemetry.stop()    — publish final state after pipeline is idle
-    // 4. watchdog.stop()     — disarm WDT (last, resets if we hang)
+    // 1. producer.stop()     — stop filling the queue (close the valve)
+    // 2. orchestrator.stop()  — drain remaining frames + queue.shutdown()
+    // 3. telemetry.stop()     — publish final state after pipeline is idle
+    // 4. config.stop()        — flush pending config to disk
+    // 5. watchdog.stop()      — disarm WDT (last, resets if we hang)
 
     if (producer) {
         producer->stop();
@@ -231,6 +238,10 @@ int main(int, char**)
 
     if (telemetry) {
         telemetry->stop();
+    }
+
+    if (config) {
+        config->stop();
     }
 
     // queue.shutdown() was already called inside orchestrator.stop().

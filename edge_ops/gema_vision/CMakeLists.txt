@@ -44,6 +44,7 @@ add_library(gema_vision_lib
     src/postproc_dispatcher.cpp
     src/lprnet_ocr_engine.cpp
     src/telemetry_collector.cpp
+    src/config_manager.cpp
 )
 
 target_include_directories(gema_vision_lib
@@ -238,3 +239,5 @@ if(QEMU_TEST_MODE)
     target_compile_definitions(test_video_producer PRIVATE QEMU_TEST_MODE=1)
     target_compile_definitions(test_telemetry PRIVATE QEMU_TEST_MODE=1)
 endif()
+
+
