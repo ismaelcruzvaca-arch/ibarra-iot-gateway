@@ -173,9 +173,8 @@ TEST(TelemetryFpsTest, CalculatesFpsFromFrameDelta)
 {
     TelemetryTestHarness harness;
 
-    // Produce 3 frames, then check FPS when collector publishes
+    // Start the orchestrator (consumer thread).
     harness.orchestrator.start();
-    harness.produce_frames(0);  // just start the orchestrator
 
     TelemetryCollector collector(
         harness.mqtt,
@@ -184,11 +183,43 @@ TEST(TelemetryFpsTest, CalculatesFpsFromFrameDelta)
         harness.thermal,
         std::chrono::seconds{1});
 
-    // Push frames BEFORE starting collector (so start frames_processed is 0)
-    for (int i = 0; i < 3; ++i) {
+    // Start the collector.  last_frames_ snapshot is taken here.
+    collector.start();
+
+    // Push frames while the orchestrator is running — they get consumed
+    // and frames_processed advances.
+    for (int i = 0; i < 10; ++i) {
         harness.queue.push(std::make_shared<cv::Mat>(
             cv::Mat::zeros(640, 480, CV_8UC3)));
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
+
+    // Wait for the telemetry interval to elapse and a publish to happen.
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+
+    collector.stop();
+    harness.orchestrator.stop();
+
+    ASSERT_GE(harness.mqtt.publish_count_.load(), 1);
+
+    std::string payload;
+    {
+        std::lock_guard<std::mutex> lock(harness.mqtt.mtx_);
+        payload = harness.mqtt.last_payload_;
+    }
+
+    // Check FPS is positive (we produced frames, interval is 1s)
+    auto fps_pos = payload.find("\"fps\":");
+    ASSERT_NE(fps_pos, std::string::npos);
+
+    // Extract the fps value
+    auto after_key = fps_pos + 6;  // past "fps:"
+    auto comma = payload.find(',', after_key);
+    std::string fps_str = payload.substr(after_key, comma - after_key);
+    double fps = std::stod(fps_str);
+
+    EXPECT_GT(fps, 0.0) << "FPS should be positive when frames were produced";
+}
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     collector.start();

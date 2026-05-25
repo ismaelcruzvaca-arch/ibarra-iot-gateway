@@ -45,8 +45,9 @@ public:
 
     FramePool(int width, int height, int type)
     {
+        pool_.reserve(kPoolSize);
         for (size_t i = 0; i < kPoolSize; ++i) {
-            pool_.emplace_back(cv::Mat::zeros(height, width, type));
+            pool_.push_back(cv::Mat::zeros(height, width, type));
             available_[i].store(true, std::memory_order_relaxed);
         }
     }
@@ -119,7 +120,7 @@ public:
     const cv::Mat& operator[](size_t index) const noexcept { return pool_[index]; }
 
 private:
-    std::vector<cv::Mat> pool_{kPoolSize};
+    std::vector<cv::Mat> pool_;
     std::atomic<bool>    available_[kPoolSize];
 };
 
