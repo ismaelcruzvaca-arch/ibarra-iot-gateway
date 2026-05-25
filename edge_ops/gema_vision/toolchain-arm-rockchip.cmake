@@ -1,10 +1,20 @@
 # ============================================================================
 # toolchain-arm-rockchip.cmake
 #
-# CMake toolchain file for cross-compiling to Rockchip RV1106
-# (armhf, uClibc).  Designed for use with the Luckfox SDK toolchain:
+# CMake toolchain file for cross-compiling to Rockchip RV1106 (armhf).
 #
-#   arm-rockchip830-linux-uclibcgnueabihf-gcc
+# ## Two toolchain profiles
+#
+#   CI / QEMU_TEST_MODE builds:
+#     Uses arm-linux-gnueabihf-gcc from Ubuntu apt (glibc-based).
+#     Works under QEMU user-mode emulation.  Available as:
+#       apt install g++-arm-linux-gnueabihf
+#
+#   Production builds (RV1106 uClibc):
+#     Needs Rockchip's uClibc toolchain from the Luckfox SDK:
+#       arm-rockchip830-linux-uclibcgnueabihf-gcc
+#     Install by cloning https://github.com/LuckfoxTECH/luckfox-pico.git
+#     and sourcing tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf/env_install_toolchain.sh
 #
 # Usage:
 #   cmake -B build \
@@ -22,40 +32,48 @@ set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR arm)
 
 # ---- Cross-compilation tools -----------------------------------------------
-set(CMAKE_C_COMPILER   arm-rockchip830-linux-uclibcgnueabihf-gcc)
-set(CMAKE_CXX_COMPILER arm-rockchip830-linux-uclibcgnueabihf-g++)
+# Try the Rockchip uClibc toolchain first (production), fall back to
+# arm-linux-gnueabihf (CI / QEMU test builds).
+#
+# To switch to the Rockchip toolchain for production builds, change these
+# to:
+#   set(CMAKE_C_COMPILER   arm-rockchip830-linux-uclibcgnueabihf-gcc)
+#   set(CMAKE_CXX_COMPILER arm-rockchip830-linux-uclibcgnueabihf-g++)
+#
+# The arm-linux-gnueabihf variant is the default because it's available
+# from Ubuntu apt and works under QEMU for SIL testing.
 
-set(CMAKE_AR       arm-rockchip830-linux-uclibcgnueabihf-ar)
-set(CMAKE_RANLIB   arm-rockchip830-linux-uclibcgnueabihf-ranlib)
-set(CMAKE_STRIP    arm-rockchip830-linux-uclibcgnueabihf-strip)
-set(CMAKE_OBJCOPY  arm-rockchip830-linux-uclibcgnueabihf-objcopy)
+find_program(CMAKE_C_COMPILER   NAMES arm-rockchip830-linux-uclibcgnueabihf-gcc
+                                 arm-linux-gnueabihf-gcc)
+find_program(CMAKE_CXX_COMPILER NAMES arm-rockchip830-linux-uclibcgnueabihf-g++
+                                 arm-linux-gnueabihf-g++)
 
-# ---- Find root (toolchain sysroot) -----------------------------------------
-# The Luckfox SDK installs its sysroot under the toolchain directory.
-# CMAKE_FIND_ROOT_PATH should point to the toolchain's sysroot so that
-# find_package and find_library search there first.
-set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
-set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+if(NOT CMAKE_CXX_COMPILER)
+    message(FATAL_ERROR "No ARM cross-compiler found. "
+        "Install g++-arm-linux-gnueabihf (apt) or set up the Rockchip SDK.")
+endif()
+
+message(STATUS "Using C++ compiler: ${CMAKE_CXX_COMPILER}")
+message(STATUS "Using C compiler:   ${CMAKE_C_COMPILER}")
 
 # ---- Compiler flags --------------------------------------------------------
 set(CMAKE_CXX_FLAGS_INIT "-march=armv7-a -mtune=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -D__arm__")
 set(CMAKE_C_FLAGS_INIT   "-march=armv7-a -mtune=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -D__arm__")
 
+# ---- Find root -------------------------------------------------------------
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+
 # ---- GTest root (cross-compiled) -------------------------------------------
-# GTest must be pre-compiled for armhf/uClibc.  Set GTEST_ROOT to the
-# installation prefix of the cross-compiled GTest.
-# Example:
-#   cmake -B build -DGTEST_ROOT=/opt/arm-gtest ...
 if(DEFINED GTEST_ROOT)
     set(GTEST_ROOT "${GTEST_ROOT}" CACHE PATH "Cross-compiled GTest root")
 endif()
 
-# ---- OpenCV root (comes with Luckfox SDK) ----------------------------------
-# OpenCV-Mobile is installed by the Luckfox SDK at a known path.
-# If find_package(OpenCV) fails, point here:
-# set(OpenCV_DIR /opt/luckfox-sdk/media/opencv-mobile/lib/cmake/opencv4)
-
-# ---- pkg-config (optional, for cross deps) ---------------------------------
-set(PKG_CONFIG_EXECUTABLE arm-rockchip830-linux-uclibcgnueabihf-pkg-config)
+# ---- OpenCV (disabled in QEMU_TEST_MODE) -----------------------------------
+# In QEMU_TEST_MODE, frame_pool.hpp is the only OpenCV dependency in the
+# library, and it's header-only.  The test executables link against OpenCV
+# but frames are created via cv::Mat::zeros which doesn't need video I/O.
+# If find_package(OpenCV) fails below, the build will error.
+# For CI without OpenCV, set -DOpenCV_DIR to a cross-compiled OpenCV path.
