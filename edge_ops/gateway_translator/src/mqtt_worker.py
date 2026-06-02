@@ -8,6 +8,7 @@ into Hasura via HasuraClient.
 
 import logging
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -16,6 +17,9 @@ import paho.mqtt.client as mqtt
 from telemetry_pb2 import ModbusBridgePayload
 
 logger = logging.getLogger(__name__)
+
+# Backoff intervals for MQTT connection retries (1s, 2s, 4s)
+_MQTT_CONNECT_BACKOFFS = [1, 2, 4]
 
 _STATUS_MAP: dict[int, str] = {
     0: "UNKNOWN",
@@ -72,15 +76,34 @@ class GatewayWorker:
             topic,
         )
 
-        try:
-            self._client.connect(broker_host, broker_port, keepalive=60)
-        except Exception:
-            logger.exception(
-                "Failed to connect to MQTT broker %s:%d",
+        # MQTT connection with backoff retry (1s, 2s, 4s)
+        last_error: Exception | None = None
+        for attempt, backoff in enumerate(_MQTT_CONNECT_BACKOFFS):
+            try:
+                self._client.connect(broker_host, broker_port, keepalive=60)
+                last_error = None
+                break
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "MQTT connect attempt %d/%d failed: %s "
+                    "-- retrying in %ds ...",
+                    attempt + 1,
+                    len(_MQTT_CONNECT_BACKOFFS),
+                    exc,
+                    backoff,
+                )
+                time.sleep(backoff)
+
+        if last_error is not None:
+            logger.error(
+                "Failed to connect to MQTT broker %s:%d "
+                "after %d attempts.",
                 broker_host,
                 broker_port,
+                len(_MQTT_CONNECT_BACKOFFS),
             )
-            raise
+            raise last_error
 
     def _on_connect(
         self,

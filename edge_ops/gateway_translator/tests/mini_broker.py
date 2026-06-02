@@ -87,6 +87,7 @@ class MiniBroker:
         # conn_id -> (socket, peer_address)
         self._conn_writers: dict[int, tuple[socket.socket, Any]] = {}
         self._next_id = 0
+        self._pending_qos2: dict[int, bool] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -183,12 +184,20 @@ class MiniBroker:
                 elif packet_type == 0x80:
                     self._handle_subscribe(sock, conn_id, remaining)
                 elif packet_type == 0x30:
-                    # PUBLISH (QoS 0: 0x30, QoS 1: 0x32 — both mask to 0x30)
+                    # PUBLISH (QoS 0: 0x30, QoS 1: 0x32, QoS 2: 0x34)
                     qos = (header[0] >> 1) & 0x03
-                    if qos == 1:
+                    if qos == 2:
+                        self._handle_publish_qos2(sock, conn_id, remaining)
+                    elif qos == 1:
                         self._handle_publish_qos1(sock, conn_id, remaining)
                     else:
                         self._handle_publish_qos0(sock, conn_id, remaining)
+                elif packet_type == 0x60:
+                    # PUBREL (0x62 → masked 0x60) → respond PUBCOMP
+                    self._handle_pubrel(sock, remaining)
+                elif packet_type == 0x50:
+                    # PUBREC (0x50 → masked 0x50) → respond PUBREL
+                    self._handle_pubrec(sock, remaining)
                 elif packet_type == 0xC0:
                     _send_packet(sock, b"\xD0\x00")  # PINGRESP
                 elif packet_type == 0xE0:
@@ -266,6 +275,65 @@ class MiniBroker:
         topic, payload = _parse_publish(data, qos=0)
         if topic is not None:
             self._forward(topic, payload, exclude=conn_id)
+
+    def _handle_publish_qos2(
+        self, sock: socket.socket, conn_id: int, remaining: int
+    ) -> None:
+        """Read a QoS 2 PUBLISH, send PUBREC, and forward to subscribers."""
+        data = _recv_exact(sock, remaining)
+        if data is None:
+            return
+        topic, payload_and_pid = _parse_publish(data, qos=1)
+        if topic is None:
+            return
+
+        topic_name, inner = payload_and_pid
+        packet_id = struct.unpack("!H", inner[:2])[0]
+        payload_bytes = inner[2:]
+
+        # PUBREC (0x50): acknowledge receipt, wait for PUBREL
+        _send_packet(
+            sock,
+            b"\x50\x02" + struct.pack("!H", packet_id),
+        )
+        # Store packet ID for PUBREL→PUBCOMP handshake
+        with self._lock:
+            if not hasattr(self, "_pending_qos2"):
+                self._pending_qos2: dict[int, bool] = {}
+            self._pending_qos2[packet_id] = True
+
+        self._forward(topic_name, payload_bytes, exclude=conn_id)
+
+    def _handle_pubrec(
+        self, sock: socket.socket, remaining: int
+    ) -> None:
+        """Respond to PUBREC with PUBREL (QoS 2 handshake, receiver side)."""
+        data = _recv_exact(sock, remaining)
+        if data is None or len(data) < 2:
+            return
+        packet_id = struct.unpack("!H", data[:2])[0]
+        # PUBREL (0x62)
+        _send_packet(
+            sock,
+            b"\x62\x02" + struct.pack("!H", packet_id),
+        )
+
+    def _handle_pubrel(
+        self, sock: socket.socket, remaining: int
+    ) -> None:
+        """Respond to PUBREL with PUBCOMP (QoS 2 handshake completion)."""
+        data = _recv_exact(sock, remaining)
+        if data is None or len(data) < 2:
+            return
+        packet_id = struct.unpack("!H", data[:2])[0]
+        # PUBCOMP (0x70)
+        _send_packet(
+            sock,
+            b"\x70\x02" + struct.pack("!H", packet_id),
+        )
+        with self._lock:
+            if hasattr(self, "_pending_qos2"):
+                self._pending_qos2.pop(packet_id, None)
 
     def _handle_publish_qos1(
         self, sock: socket.socket, conn_id: int, remaining: int
