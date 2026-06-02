@@ -68,10 +68,26 @@ def main() -> None:
     worker.start()
     logger.info("gateway_translator started -- flushing every 1s.")
 
+    # FR-7: health tracking
+    last_flush_time = time.monotonic()
+    health_interval = 60  # seconds between health logs
+    next_health_log = health_interval
+
     while not _shutdown_requested:
         time.sleep(1)
         batch = worker.drain_buffer()
         if not batch:
+            # FR-7: periodic health log
+            elapsed = time.monotonic()
+            if elapsed >= next_health_log:
+                next_health_log = elapsed + health_interval
+                age = elapsed - last_flush_time
+                logger.info(
+                    "HEALTH — MQTT=%s buffer=%d last_flush=%ds ago",
+                    "connected" if worker.is_connected else "DISCONNECTED",
+                    worker.buffer_size,
+                    int(age),
+                )
             continue
 
         ok = hasura.insert_telemetry_batch(batch)
@@ -82,6 +98,8 @@ def main() -> None:
             )
             for entry in batch:
                 worker.enqueue_telemetry(entry)
+        else:
+            last_flush_time = time.monotonic()
 
     # FR-5: Final flush before shutdown — drain remaining buffer
     final_batch = worker.drain_buffer()

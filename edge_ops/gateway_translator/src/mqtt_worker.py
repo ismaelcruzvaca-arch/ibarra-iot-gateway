@@ -160,6 +160,17 @@ class GatewayWorker:
             len(payload.nodes),
         )
 
+    @property
+    def buffer_size(self) -> int:
+        """Current number of entries in the buffer (thread-safe)."""
+        with self._lock:
+            return len(self._buffer)
+
+    @property
+    def is_connected(self) -> bool:
+        """Whether the MQTT client is currently connected to the broker."""
+        return self._client.is_connected()
+
     def enqueue_telemetry(self, data: dict[str, Any]) -> None:
         """Thread-safe append to the internal buffer."""
         with self._lock:
