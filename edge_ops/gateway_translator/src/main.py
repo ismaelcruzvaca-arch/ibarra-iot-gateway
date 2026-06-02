@@ -83,6 +83,22 @@ def main() -> None:
             for entry in batch:
                 worker.enqueue_telemetry(entry)
 
+    # FR-5: Final flush before shutdown — drain remaining buffer
+    final_batch = worker.drain_buffer()
+    if final_batch:
+        logger.info(
+            "Final flush: %d entries remaining in buffer.",
+            len(final_batch),
+        )
+        ok = hasura.insert_telemetry_batch(final_batch)
+        if ok:
+            logger.info("Final flush succeeded.")
+        else:
+            logger.warning(
+                "Final flush failed -- %d entries LOST.",
+                len(final_batch),
+            )
+
     worker.stop()
     logger.info("gateway_translator stopped.")
 
