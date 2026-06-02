@@ -180,12 +180,15 @@ class MiniBroker:
 
                 if packet_type == 0x10:
                     self._handle_connect(sock, remaining)
-                elif packet_type == 0x82:
+                elif packet_type == 0x80:
                     self._handle_subscribe(sock, conn_id, remaining)
-                elif packet_type == 0x32:
-                    self._handle_publish_qos1(sock, conn_id, remaining)
                 elif packet_type == 0x30:
-                    self._handle_publish_qos0(sock, conn_id, remaining)
+                    # PUBLISH (QoS 0: 0x30, QoS 1: 0x32 — both mask to 0x30)
+                    qos = (header[0] >> 1) & 0x03
+                    if qos == 1:
+                        self._handle_publish_qos1(sock, conn_id, remaining)
+                    else:
+                        self._handle_publish_qos0(sock, conn_id, remaining)
                 elif packet_type == 0xC0:
                     _send_packet(sock, b"\xD0\x00")  # PINGRESP
                 elif packet_type == 0xE0:
