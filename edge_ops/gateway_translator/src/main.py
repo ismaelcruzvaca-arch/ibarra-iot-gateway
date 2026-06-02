@@ -20,6 +20,9 @@ HASURA_GRAPHQL_URL = os.environ.get("HASURA_GRAPHQL_URL")
 HASURA_ADMIN_SECRET = os.environ.get("HASURA_ADMIN_SECRET")
 MQTT_BROKER_HOST = os.environ.get("MQTT_BROKER_HOST")
 
+# NR-2: buffer cap (default 1000, 0 = unlimited)
+_BUFFER_MAX = int(os.environ.get("BUFFER_MAX", "1000"))
+
 _shutdown_requested = False
 
 
@@ -64,6 +67,7 @@ def main() -> None:
     worker = GatewayWorker(
         broker_host=MQTT_BROKER_HOST,
         hasura_client=hasura,
+        max_buffer=_BUFFER_MAX,
     )
     worker.start()
     logger.info("gateway_translator started -- flushing every 1s.")

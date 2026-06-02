@@ -39,6 +39,9 @@ class GatewayWorker:
     """Subscribes to an MQTT topic, decodes Protobuf payloads, and buffers
     entries for batch insertion into Hasura."""
 
+    # NR-2: default max buffer size (configurable via env var)
+    _DEFAULT_MAX_BUFFER = 1000
+
     def __init__(
         self,
         broker_host: str,
@@ -47,6 +50,7 @@ class GatewayWorker:
         broker_port: int = 1883,
         topic: str = "novamex/linea1/telemetry",
         client_id: str = "gateway-translator",
+        max_buffer: int | None = None,
     ) -> None:
         """Initialise the GatewayWorker.
 
@@ -56,11 +60,17 @@ class GatewayWorker:
             broker_port: MQTT broker port (default 1883).
             topic: MQTT topic to subscribe to.
             client_id: MQTT client identifier.
+            max_buffer: Max buffer size (default 1000, 0 = unlimited).
         """
         self._topic = topic
         self._hasura = hasura_client
         self._lock = threading.Lock()
         self._buffer: list[dict[str, Any]] = []
+        self._max_buffer = (
+            max_buffer if max_buffer is not None
+            else self._DEFAULT_MAX_BUFFER
+        )
+        self._dropped_count = 0
 
         self._client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
@@ -171,9 +181,34 @@ class GatewayWorker:
         """Whether the MQTT client is currently connected to the broker."""
         return self._client.is_connected()
 
+    @property
+    def dropped_count(self) -> int:
+        """Total entries dropped due to buffer overflow (NR-2)."""
+        return self._dropped_count
+
+    @property
+    def max_buffer(self) -> int:
+        """Configured buffer capacity (0 = unlimited)."""
+        return self._max_buffer
+
     def enqueue_telemetry(self, data: dict[str, Any]) -> None:
-        """Thread-safe append to the internal buffer."""
+        """Thread-safe append to the internal buffer.
+
+        Implements NR-2: when buffer exceeds max size, oldest entries
+        are evicted (FIFO) with a warning logged every 100 drops to
+        avoid log spam.
+        """
         with self._lock:
+            if self._max_buffer > 0 and len(self._buffer) >= self._max_buffer:
+                self._buffer.pop(0)  # FIFO eviction — drop oldest
+                self._dropped_count += 1
+                if self._dropped_count % 100 == 1:
+                    logger.warning(
+                        "Buffer full (%d entries) — dropped %d oldest "
+                        "entries so far. Hasura may be down.",
+                        self._max_buffer,
+                        self._dropped_count,
+                    )
             self._buffer.append(data)
 
     def drain_buffer(self) -> list[dict[str, Any]]:

@@ -42,6 +42,7 @@ python src/main.py
 | `MQTT_BROKER_HOST` | ✅ | — | MQTT broker hostname or IP |
 | `MQTT_TOPIC` | ❌ | `novamex/linea1/telemetry` | MQTT topic to subscribe to |
 | `BATCH_INTERVAL_SEC` | ❌ | `5` | Seconds between batch flushes to Hasura |
+| `BUFFER_MAX` | ❌ | `1000` | Max buffer entries (0 = unlimited). Oldest evicted first when full (NR-2) |
 
 ## Deployment
 
