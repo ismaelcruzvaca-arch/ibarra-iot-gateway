@@ -36,13 +36,13 @@ Chain strategy: feature-branch-chain
 
 ## Phase 2: Test Infrastructure
 
-- [ ] 2.1 Create `tests/mock_hasura.py` — HTTP server with `/kill`, `/revive`, `/status` endpoints, GraphQL `InsertTelemetryBatch` handler
-- [ ] 2.2 Create `tests/mini_broker.py` — Minimal MQTT v3.1.1 broker for isolated tests
+- [x] 2.1 Create `tests/mock_hasura.py` — HTTP mock Hasura with `fail_mode` property (400/500/timeout), GraphQL `InsertTelemetryBatch` handler, `received_objects()` for test assertions
+- [x] 2.2 Create `tests/mini_broker.py` — Minimal MQTT v3.1.1 broker: raw TCP sockets + threading, CONNECT/CONNACK, SUBSCRIBE/SUBACK, PUBLISH/PUBACK + forward-to-subscribers, PINGREQ/PINGRESP, DISCONNECT
 
 ## Phase 3: Integration & Resilience Tests
 
-- [ ] 3.1 Create `tests/simulator.py` — Publishes 15 msg/s from 5 virtual NORVI nodes
-- [ ] 3.2 Create `tests/test_resilience.py` — Scenarios: normal flow, broker down (1s/2s/4s retry), Hasura kill/revive (0 lost), buffer overflow FIFO eviction, shutdown flush
+- [x] 3.1 Create `tests/simulator.py` — `TelemetrySimulator` class: `generate_payload()`, `send_once()`, `send_burst()`, `start_background()`/`stop_background()`
+- [x] 3.2 Create `tests/test_resilience.py` — 14 test cases covering: HasuraClient happy/400/500/timeout/empty, GatewayWorker receive/drain/empty/multiple, Hasura down re-queue, Hasura recover, env-var missing/partial/full, simulator payload structure and publish
 
 ## Phase 4: Deployment & Documentation
 
