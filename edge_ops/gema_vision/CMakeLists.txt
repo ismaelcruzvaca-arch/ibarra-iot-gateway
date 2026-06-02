@@ -170,6 +170,41 @@ target_link_libraries(test_video_producer
         GTest::Main
 )
 
+# ---- Benchmark tests: collector unit tests -------------------------------
+add_executable(test_benchmark_collector
+    test/test_benchmark_collector.cpp
+)
+
+target_include_directories(test_benchmark_collector
+    PRIVATE
+        include
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_link_libraries(test_benchmark_collector
+    PRIVATE
+        GTest::GTest
+        GTest::Main
+)
+
+# ---- Benchmark standalone executable (host mode) -------------------------
+add_executable(gema-benchmark
+    benchmark/main.cpp
+    benchmark/benchmark_pipeline.cpp
+    benchmark/mock_stages.cpp
+)
+
+target_include_directories(gema-benchmark
+    PRIVATE
+        include
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_link_libraries(gema-benchmark
+    PRIVATE
+        ${OpenCV_LIBS}
+)
+
 # ---- SIL tests: Telemetry -----------------------------------------------
 add_executable(test_telemetry
     test/test_telemetry.cpp
@@ -204,6 +239,9 @@ add_test(NAME Watchdog
 add_test(NAME OtaAgent
     COMMAND test_ota
 )
+add_test(NAME BenchmarkCollector
+    COMMAND test_benchmark_collector
+)
 
 # ---- Compiler warnings ----------------------------------------------------
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -234,6 +272,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(gema-hw-diag PRIVATE
         -Wall -Wextra -Wpedantic -Werror
     )
+    target_compile_options(gema-benchmark PRIVATE
+        -Wall -Wextra -Wpedantic -Werror
+    )
+    target_compile_options(test_benchmark_collector PRIVATE
+        -Wall -Wextra -Wpedantic -Werror
+    )
 endif()
 
 # ---- QEMU test mode (force mocks on ALL targets) --------------------------
@@ -251,6 +295,8 @@ if(QEMU_TEST_MODE)
     target_compile_definitions(test_ota PRIVATE QEMU_TEST_MODE=1)
     target_compile_definitions(test_video_producer PRIVATE QEMU_TEST_MODE=1)
     target_compile_definitions(test_telemetry PRIVATE QEMU_TEST_MODE=1)
+    target_compile_definitions(gema-benchmark PRIVATE QEMU_TEST_MODE=1)
+    target_compile_definitions(test_benchmark_collector PRIVATE QEMU_TEST_MODE=1)
 endif()
 
 
