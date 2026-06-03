@@ -99,18 +99,36 @@ void test_ema_reset(void) {
 
 void test_payload_serialization_structure(void) {
 #ifdef ARDUINO
-    String outputJson = serializePayload(42, "2026-05-19T21:20:00Z");
+    String outputJson = serializePayload(42, "2026-05-19T21:20:00Z", "norvi_test_01");
 #else
-    std::string outputJson = serializePayload(42, "2026-05-19T21:20:00Z");
+    std::string outputJson = serializePayload(42, "2026-05-19T21:20:00Z", "norvi_test_01", 3600);
 #endif
 
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, outputJson);
     TEST_ASSERT_TRUE(err == DeserializationError::Ok);
+
+    // ── Required top-level fields ────────────────────────────────────────────
+    TEST_ASSERT_EQUAL_STRING("norvi_test_01", doc["device_id"].as<const char*>());
+    TEST_ASSERT_EQUAL_STRING("norvi", doc["device_type"].as<const char*>());
+    TEST_ASSERT_EQUAL_STRING("2026-05-19T21:20:00Z", doc["timestamp"].as<const char*>());
     TEST_ASSERT_EQUAL_STRING("ONLINE", doc["node_health"].as<const char*>());
-    TEST_ASSERT_EQUAL_INT(42, doc["metrics"][0]["value"].as<int>());
+
+    // ── metrics[0] — production_cycle ────────────────────────────────────────
     TEST_ASSERT_EQUAL_STRING("production_cycle", doc["metrics"][0]["name"].as<const char*>());
+    TEST_ASSERT_EQUAL_INT(42, doc["metrics"][0]["value"].as<int>());
+    TEST_ASSERT_EQUAL_STRING("count", doc["metrics"][0]["unit"].as<const char*>());
     TEST_ASSERT_EQUAL_STRING("2026-05-19T21:20:00Z", doc["metrics"][0]["timestamp"].as<const char*>());
+
+    // ── metrics[1] — uptime_s ────────────────────────────────────────────────
+    TEST_ASSERT_EQUAL_STRING("uptime_s", doc["metrics"][1]["name"].as<const char*>());
+#ifdef ARDUINO
+    TEST_ASSERT_GREATER_THAN(0, doc["metrics"][1]["value"].as<uint32_t>());
+#else
+    TEST_ASSERT_EQUAL_INT(3600, doc["metrics"][1]["value"].as<int>());
+#endif
+    TEST_ASSERT_EQUAL_STRING("s", doc["metrics"][1]["unit"].as<const char*>());
+    TEST_ASSERT_EQUAL_STRING("2026-05-19T21:20:00Z", doc["metrics"][1]["timestamp"].as<const char*>());
 }
 
 
