@@ -25,7 +25,7 @@ function evaluateHealthState(cpuTemp, ramUsage) {
   if (cpuTemp > 75.0 || ramUsage > 90) {
     return 'WARNING';
   }
-  return 'OK';
+  return 'ONLINE';
 }
 
 /**
@@ -42,18 +42,15 @@ function evaluateHealthState(cpuTemp, ramUsage) {
 function buildTelemetryPayload({ cpuTemp, ramUsage, diskFreeMb, timestamp }) {
   const health = evaluateHealthState(cpuTemp, ramUsage);
   return {
-    enterprise: 'novamex',
-    site: 'ibarra',
-    area: 'it_infra',
     device_id: 'rpi_gateway_01',
+    device_type: 'gateway',
     timestamp,
-    health,
     node_health: health,
-    metrics: {
-      cpu_temp_celsius: cpuTemp,
-      ram_usage_percent: ramUsage,
-      disk_free_mb: diskFreeMb
-    }
+    metrics: [
+      { name: 'cpu_temp_celsius', value: cpuTemp, unit: '°C' },
+      { name: 'ram_usage_percent', value: ramUsage },
+      { name: 'disk_free_mb', value: diskFreeMb, unit: 'MB' }
+    ]
   };
 }
 
