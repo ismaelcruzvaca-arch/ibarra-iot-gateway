@@ -83,6 +83,27 @@ describe('System Monitor — Business Logic & Rules', () => {
 
       assert.equal(payload.node_health, 'WARNING');
     });
+
+    it('should use fallback device_id when none provided', () => {
+      const payload = buildTelemetryPayload({
+        cpuTemp: 50.0,
+        ramUsage: 50,
+        diskFreeMb: 10000,
+        timestamp: '2026-06-03T00:00:00.000Z'
+      });
+      assert.equal(payload.device_id, 'rpi_gateway_01');
+    });
+
+    it('should accept custom device_id from caller', () => {
+      const payload = buildTelemetryPayload({
+        cpuTemp: 50.0,
+        ramUsage: 50,
+        diskFreeMb: 10000,
+        timestamp: '2026-06-03T00:00:00.000Z',
+        deviceId: 'custom-gateway-02'
+      });
+      assert.equal(payload.device_id, 'custom-gateway-02');
+    });
   });
 
   describe('parseDiskSpaceMb', () => {

@@ -14,12 +14,14 @@ const brokerUrl = process.env.MQTT_BROKER_URL || 'mqtt://localhost:1883';
 const topic     = process.env.MQTT_TOPIC      || 'novamex/ibarra/it_infra/rpi5_001';
 const interval  = parseInt(process.env.POLL_INTERVAL_MS || '30000', 10);
 const hostfs    = process.env.HOST_FS_PATH    || '/hostfs';
+const deviceId  = process.env.DEVICE_ID       || os.hostname();
 
 console.log('[system_monitor] Initializing EdgeOps system monitor...');
 console.log('[system_monitor] Broker URL:', brokerUrl);
 console.log('[system_monitor] Topic:', topic);
 console.log('[system_monitor] Poll interval:', interval, 'ms');
 console.log('[system_monitor] Host filesystem mount:', hostfs);
+console.log('[system_monitor] Device ID:', deviceId);
 
 // Connect to MQTT Broker
 const client = mqtt.connect(brokerUrl);
@@ -78,7 +80,8 @@ function pollMetrics() {
     cpuTemp,
     ramUsage,
     diskFreeMb: diskFree,
-    timestamp
+    timestamp,
+    deviceId
   });
 
   const payloadStr = JSON.stringify(payload);
@@ -87,7 +90,7 @@ function pollMetrics() {
       console.error('[system_monitor] Failed to publish metrics:', err.message);
     } else {
       console.log(
-        `[system_monitor] Telemetry sent OK. CPU Temp: ${cpuTemp.toFixed(1)}°C, RAM: ${ramUsage}%, Disk Free: ${diskFree}MB, Health: ${payload.health}`
+        `[system_monitor] Telemetry sent OK. CPU Temp: ${cpuTemp.toFixed(1)}°C, RAM: ${ramUsage}%, Disk Free: ${diskFree}MB, Health: ${payload.node_health}`
       );
     }
   });
