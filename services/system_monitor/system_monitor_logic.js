@@ -37,12 +37,13 @@ function evaluateHealthState(cpuTemp, ramUsage) {
  * @param {number} params.ramUsage
  * @param {number} params.diskFreeMb
  * @param {string} params.timestamp
+ * @param {string} [params.deviceId] - Device identifier (default: 'rpi_gateway_01')
  * @returns {object}
  */
-function buildTelemetryPayload({ cpuTemp, ramUsage, diskFreeMb, timestamp }) {
+function buildTelemetryPayload({ cpuTemp, ramUsage, diskFreeMb, timestamp, deviceId }) {
   const health = evaluateHealthState(cpuTemp, ramUsage);
   return {
-    device_id: 'rpi_gateway_01',
+    device_id: deviceId || 'rpi_gateway_01',
     device_type: 'gateway',
     timestamp,
     node_health: health,
