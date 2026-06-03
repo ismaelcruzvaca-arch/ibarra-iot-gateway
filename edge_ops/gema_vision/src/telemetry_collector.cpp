@@ -136,13 +136,13 @@ std::string TelemetryCollector::build_payload(
          << "\"timestamp\":\"" << timestamp << "\","
          << "\"node_health\":\"" << node_health << "\","
          << "\"metrics\":["
-         << "{\"name\":\"uptime_sec\",\"value\":" << uptime << ",\"unit\":\"s\"},"
-         << "{\"name\":\"fps\",\"value\":" << fps << "},"
-         << "{\"name\":\"frames_processed\",\"value\":" << frames_total << "},"
-         << "{\"name\":\"frames_dropped\",\"value\":" << dropped << "},"
-         << "{\"name\":\"soc_temp_c\",\"value\":" << temp_c << ",\"unit\":\"\\u00b0C\"},"
-         << "{\"name\":\"heap_resident_kb\",\"value\":" << vmrss_kb << ",\"unit\":\"kB\"},"
-         << "{\"name\":\"defects_total\",\"value\":" << defects_total << "}"
+          << "{\"name\":\"uptime_sec\",\"value\":" << uptime << ",\"unit\":\"s\"},"
+          << "{\"name\":\"fps\",\"value\":" << fps << ",\"unit\":\"fps\"},"
+          << "{\"name\":\"frames_processed\",\"value\":" << frames_total << ",\"unit\":\"count\"},"
+          << "{\"name\":\"frames_dropped\",\"value\":" << dropped << ",\"unit\":\"count\"},"
+          << "{\"name\":\"soc_temp_c\",\"value\":" << temp_c << ",\"unit\":\"\\u00b0C\"},"
+          << "{\"name\":\"heap_resident_kb\",\"value\":" << vmrss_kb << ",\"unit\":\"kB\"},"
+          << "{\"name\":\"defects_total\",\"value\":" << defects_total << ",\"unit\":\"count\"}"
          << "]}";
 
     return json.str();
