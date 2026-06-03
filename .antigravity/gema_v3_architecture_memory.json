@@ -1,0 +1,233 @@
+{
+  "meta": {
+    "project": "ibarra-iot-gateway",
+    "change": "gema-v3-bootstrap",
+    "exported_at": "2026-05-18T22:45:00-03:00",
+    "branch": "feature/gema-v3",
+    "last_commit": "5341124 feat: GEMA V3.0 bootstrap - edge_worker, cloud_sync, simulator, Docker, CI/CD",
+    "sdd_status": "ARCHIVED — cycle complete",
+    "artifact_store": "engram"
+  },
+
+  "architecture_rules": {
+    "topic_key": "architecture/gema-v3-rules",
+    "engram_obs_id": 106,
+    "rules": [
+      {
+        "name": "Sparkplug B Lite — Communication Standard",
+        "description": "Every MQTT message MUST include the 'node_health' field. Broker LWT is used to detect sensor disconnections (NDEATH)."
+      },
+      {
+        "name": "SQLite WAL — Offline Vault",
+        "description": "SQLite as the local offline vault with PRAGMA journal_mode=WAL. Mandatory for concurrency between edge_worker (writer) and cloud_sync (reader) on the shared volume."
+      },
+      {
+        "name": "Exponential Backoff — Cloud Resilience",
+        "description": "cloud_sync MUST implement Exponential Backoff for Hasura sync retries."
+      },
+      {
+        "name": "Strict TDD — Gentle Pi",
+        "description": "No production code without its Test Harness first (Mocks for MQTT and HTTP). Managed by Gentle AI / Gentle Pi."
+      }
+    ]
+  },
+
+  "specification": {
+    "topic_key": "sdd/gema-v3-bootstrap/spec",
+    "engram_obs_id": 110,
+    "domains": [
+      {
+        "domain": "Ingestion Schema — Payload Universal",
+        "requirement": "Universal JSON Payload — Every MQTT message MUST be valid JSON with node_health (Sparkplug B Lite). Metrics are a dynamic array; each entry has name (string), value (number), timestamp (ISO 8601), MAY have unit (string). No hardcoded metric names.",
+        "scenarios": [
+          "GIVEN edge_worker subscribed to novamex/# WHEN JSON with node_health + 3 metrics THEN insert with status PENDING",
+          "GIVEN edge_worker subscribed WHEN JSON with node_health + empty metrics [] THEN insert with PENDING (empty metrics valid)"
+        ]
+      },
+      {
+        "domain": "Data Storage — SQLite WAL Mode",
+        "requirement": "Concurrent-safe SQLite — PRAGMA journal_mode=WAL on every connection. Permits concurrent edge_worker writes + cloud_sync reads without SQLITE_BUSY.",
+        "scenarios": [
+          "GIVEN edge_worker writing WHEN cloud_sync simultaneously queries PENDING THEN both succeed, no SQLITE_BUSY"
+        ]
+      },
+      {
+        "domain": "Simulation — 7 Máquinas",
+        "requirement": "simulator.py simulates 7 machines across areas, publishing every 10s to novamex/ibarra/{area}/{machine}/{node}. Each client sets LWT so abrupt disconnect emits NDEATH (node_health: OFFLINE).",
+        "scenarios": [
+          "GIVEN simulator.py running WHEN 10s elapse THEN each machine publishes valid JSON with node_health",
+          "GIVEN machine connected via MQTT with LWT WHEN disconnect abruptly THEN broker publishes LWT AND edge_worker receives node_health: OFFLINE"
+        ]
+      },
+      {
+        "domain": "Edge Processing — MQTT to SQLite",
+        "requirement": "edge_worker subscribes to novamex/#. On each message: (1) validate JSON parseability; (2) validate node_health exists; (3) insert validated with status PENDING. Discards must NOT crash.",
+        "scenarios": [
+          "GIVEN edge_worker subscribed WHEN malformed JSON published THEN discard without crash AND SQLite remains operational",
+          "GIVEN edge_worker subscribed WHEN valid JSON without node_health THEN discard without crash AND no INSERT"
+        ]
+      },
+      {
+        "domain": "Cloud Synchronization — Hasura Upload",
+        "requirement": "cloud_sync polls SQLite for PENDING records, constructs dynamic GraphQL mutation, HTTP POST to Hasura. On 5xx: delay = min(1000 × 2^attempt, 60000). Records stay PENDING until 2xx or max retries.",
+        "scenarios": [
+          "GIVEN cloud_sync finds PENDING record WHEN Hasura responds 200 THEN mark SYNCED",
+          "GIVEN cloud_sync finds PENDING record WHEN Hasura responds 500 THEN status stays PENDING AND retry follows min(1000 × 2^attempt, 60000)"
+        ]
+      }
+    ]
+  },
+
+  "design_decisions": [
+    {
+      "id": "AD1",
+      "decision": "Bare Node.js (no Express/Fastify)",
+      "context": "edge_worker and cloud_sync need NO HTTP server; adding a framework increases attack surface, image size, and startup time on RPi.",
+      "status": "✅ Followed"
+    },
+    {
+      "id": "AD2",
+      "decision": "better-sqlite3 (sync) with WAL mode",
+      "context": "Sync API is simpler + 2-3x faster on writes vs async overhead. WAL already handles concurrent read/write.",
+      "status": "✅ Followed"
+    },
+    {
+      "id": "AD3",
+      "decision": "Fixed 5s poll for cloud_sync",
+      "context": "Poll adds latency but is decoupled and reliable. SQLite NOTIFY hooks are unreliable on WAL.",
+      "status": "✅ Followed"
+    },
+    {
+      "id": "AD4",
+      "decision": "Single simulator.py (7 clients in loop)",
+      "context": "Single script with dict-driven loop simpler to maintain; per-machine would need supervisor/orchestration.",
+      "status": "✅ Followed"
+    },
+    {
+      "id": "AD5",
+      "decision": "edge-net internal bridge network",
+      "context": "Internal bridge isolates containers; only Mosquitto 1883 exposed to host. No port leaks from services.",
+      "status": "✅ Followed"
+    },
+    {
+      "id": "AD6",
+      "decision": "Watchtower poll 60s",
+      "context": "Poll every 60s simpler on RPi; webhook requires exposing endpoint and complicates firewall.",
+      "status": "✅ Followed"
+    }
+  ],
+
+  "tasks": {
+    "topic_key": "sdd/gema-v3-bootstrap/tasks",
+    "engram_obs_id": 113,
+    "forecast": {
+      "estimated_lines": "700-900",
+      "budget_risk": "High",
+      "chained_prs": "Yes",
+      "suggested_split": "PR 1 (Foundation) → PR 2 (Services) → PR 3 (CI/CD)",
+      "delivery_strategy": "ask-on-risk",
+      "chain_strategy": "feature-branch-chain"
+    },
+    "phases": [
+      {
+        "phase": 1,
+        "name": "Foundation — Infrastructure",
+        "completed": true,
+        "tasks": [
+          "1.1 Project directory tree: services/edge_worker/, services/cloud_sync/, simulation/, docker/",
+          "1.2 .env.example with all env vars",
+          "1.3 docker/mosquitto.conf — persistence, allow_anonymous, LWT",
+          "1.4 docker/docker-compose.yml — 5 services (mosquitto, edge_worker, cloud_sync, simulator, watchtower)"
+        ]
+      },
+      {
+        "phase": 2,
+        "name": "Edge Worker — MQTT Ingestion",
+        "completed": true,
+        "tasks": [
+          "2.1 [RED] Tests: malformed JSON discard, LWT/NDEATH",
+          "2.2 [GREEN] package.json with mqtt, better-sqlite3",
+          "2.3 [GREEN] edge_worker.js — MQTT subscribe, validate(), SQLite INSERT with WAL",
+          "2.4 Dockerfile Node.js 20 ARM64 multi-stage"
+        ]
+      },
+      {
+        "phase": 3,
+        "name": "Cloud Sync — Hasura Upload",
+        "completed": true,
+        "tasks": [
+          "3.1 [RED] Tests: Hasura 500 retry, backoff timing",
+          "3.2 [GREEN] package.json with better-sqlite3 + sql.js devDep",
+          "3.3 [GREEN] cloud_sync.js — 5s poll, GraphQL mutation, Exponential Backoff",
+          "3.4 Dockerfile with HEALTHCHECK"
+        ]
+      },
+      {
+        "phase": 4,
+        "name": "Simulator — Test Traffic",
+        "completed": false,
+        "tasks": [
+          "4.1 requirements.txt with paho-mqtt",
+          "4.2 simulator.py — 7 machines, 2 areas, LWT, 10s heartbeats",
+          "4.3 Dockerfile Python 3.12-slim"
+        ]
+      },
+      {
+        "phase": 5,
+        "name": "CI/CD — Multi-Arch Pipeline",
+        "completed": true,
+        "tasks": [
+          "5.1 .github/workflows/main.yml — test, docker buildx matrix (linux/amd64 + linux/arm64), push to GHCR"
+        ]
+      }
+    ]
+  },
+
+  "state": {
+    "topic_key": "sdd/gema-v3-bootstrap/state",
+    "engram_obs_id": 111,
+    "artifact_store": "engram",
+    "artifacts": {
+      "proposal": false,
+      "spec": true,
+      "design": true,
+      "tasks": true
+    },
+    "last_updated": "2026-05-18"
+  },
+
+  "verification": {
+    "engram_obs_id": 118,
+    "result": "PASS WITH WARNINGS — 15/15 tests passing, 9/9 spec scenarios COMPLIANT, 6/6 design decisions followed",
+    "test_coverage": {
+      "edge_worker.js": "83.72%",
+      "cloud_sync.js": "84.95%"
+    }
+  },
+
+  "delivered_files": [
+    ".env.example",
+    "docker/docker-compose.yml",
+    "docker/mosquitto.conf",
+    "services/edge_worker/edge_worker.js",
+    "services/edge_worker/edge_worker.test.js",
+    "services/edge_worker/package.json",
+    "services/edge_worker/Dockerfile",
+    "services/cloud_sync/cloud_sync.js",
+    "services/cloud_sync/cloud_sync.test.js",
+    "services/cloud_sync/package.json",
+    "services/cloud_sync/Dockerfile",
+    "simulation/simulator.py",
+    "simulation/requirements.txt",
+    "simulation/Dockerfile",
+    ".github/workflows/main.yml"
+  ],
+
+  "archive_report": {
+    "topic_key": "sdd/gema-v3-bootstrap/archive-report",
+    "engram_obs_id": 119,
+    "cycle_summary": "Init → Spec → Design → Tasks → Apply (5 phases, 16 tasks) → Verify → Archive",
+    "commit_strategy": "Feature Branch Chain — PR 1 (Foundation), PR 2 (Services+Simulator), PR 3 (CI/CD)",
+    "verdict": "Archive deemed safe. No CRITICAL issues. 3 WARNING-level."
+  }
+}

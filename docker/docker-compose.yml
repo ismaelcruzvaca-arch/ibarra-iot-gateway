@@ -1,0 +1,82 @@
+services:
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+      - "8883:8883"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./certs:/mosquitto/config/certs:ro
+      - mosquitto_data:/mosquitto/data/
+    networks:
+      - edge-net
+    restart: unless-stopped
+
+  edge_worker:
+    image: ghcr.io/chocolate-ibarra/gema-edge-worker:latest
+    build:
+      context: ../services/edge_worker
+    env_file: ../.env
+    volumes:
+      - telemetry_data:/data
+    depends_on:
+      - mosquitto
+    networks:
+      - edge-net
+    restart: unless-stopped
+
+  cloud_sync:
+    image: ghcr.io/chocolate-ibarra/gema-cloud-sync:latest
+    build:
+      context: ../services/cloud_sync
+    env_file: ../.env
+    volumes:
+      - telemetry_data:/data
+    depends_on:
+      - mosquitto
+    networks:
+      - edge-net
+    restart: unless-stopped
+
+  system_monitor:
+    image: ghcr.io/chocolate-ibarra/gema-system-monitor:latest
+    build:
+      context: ../services/system_monitor
+    env_file: ../.env
+    volumes:
+      - /sys:/sys:ro
+      - /:/hostfs:ro
+    depends_on:
+      - mosquitto
+    networks:
+      - edge-net
+    restart: unless-stopped
+
+  simulator:
+    build:
+      context: ../simulation
+    depends_on:
+      - mosquitto
+    networks:
+      - edge-net
+    profiles:
+      - dev
+    restart: unless-stopped
+
+  watchtower:
+    image: containrrr/watchtower
+    command: --interval 60
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - edge-net
+    restart: unless-stopped
+
+volumes:
+  telemetry_data:
+  mosquitto_data:
+
+networks:
+  edge-net:
+    driver: bridge

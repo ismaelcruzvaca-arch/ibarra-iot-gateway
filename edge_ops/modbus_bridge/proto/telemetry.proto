@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package modbus_bridge;
+
+// ---------------------------------------------------------------------------
+// NodeStatus — estado actual del nodo Modbus RTU
+// ---------------------------------------------------------------------------
+enum NodeStatus {
+  NODE_OFFLINE = 0;
+  NODE_ONLINE  = 1;
+  NODE_ERROR   = 2;
+}
+
+// ---------------------------------------------------------------------------
+// ModbusNodeState — estado individual de un nodo esclavo
+// ---------------------------------------------------------------------------
+message ModbusNodeState {
+  uint32        node_id     = 1;
+  uint32        cycle_count = 2;
+  NodeStatus    status      = 3;
+}
+
+// ---------------------------------------------------------------------------
+// ModbusBridgePayload — payload de telemetría agregada del bridge
+// ---------------------------------------------------------------------------
+message ModbusBridgePayload {
+  repeated ModbusNodeState nodes = 1;
+}

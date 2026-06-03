@@ -1,0 +1,14 @@
+{
+  "name": "gema-system-monitor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "GEMA V3.0 EdgeOps System Monitor — RPi Host Telemetry",
+  "main": "system_monitor.js",
+  "scripts": {
+    "start": "node system_monitor.js",
+    "test": "node --test system_monitor.test.js"
+  },
+  "dependencies": {
+    "mqtt": "^5.10.0"
+  }
+}
