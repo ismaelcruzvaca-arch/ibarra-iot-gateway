@@ -53,6 +53,7 @@ public:
      * @param orchestrator Pipeline orchestrator (provides frames_processed).
      * @param frame_queue  Frame queue (provides dropped_count).
      * @param thermal      SoC thermal monitor.
+     * @param device_id    Unique device identifier injected at construction.
      * @param interval     Publish interval (default: 30 seconds).
      */
     explicit TelemetryCollector(
@@ -60,6 +61,7 @@ public:
         const InferenceOrchestrator& orchestrator,
         const ThreadSafeQueue<std::shared_ptr<cv::Mat>>& frame_queue,
         const ThermalMonitor& thermal,
+        const std::string& device_id,
         std::chrono::seconds interval = std::chrono::seconds{30}) noexcept;
 
     ~TelemetryCollector();
@@ -101,6 +103,7 @@ private:
     const InferenceOrchestrator& orchestrator_;
     const ThreadSafeQueue<std::shared_ptr<cv::Mat>>& frame_queue_;
     const ThermalMonitor& thermal_;
+    std::string device_id_;
     std::chrono::seconds interval_;
 
     // Thread control.

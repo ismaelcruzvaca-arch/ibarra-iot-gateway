@@ -1,105 +1,133 @@
+"""gateway_translator -- MQTT to Hasura bridge service.
+
+Subscribes to ModbusBridgePayload on the plant MQTT broker, decodes
+Protobuf telemetry, and batch-inserts into Hasura via GraphQL mutation.
 """
-gateway_translator — Raspberry Pi 5 MQTT ↔ HTTP bridge worker.
-
-Subscribes to the local Modbus telemetry topic (novamex/linea1/telemetry),
-deserialises Protobuf payloads, and forwards them to upstream services.
-
-Phase 1: skeleton — imports, placeholder subscription loop.
-Phase 2+: full pipeline with Protobuf deserialisation, HTTP forwarding,
-           health reporting, and reconnection logic.
-"""
-
-import paho.mqtt.client as mqtt
-import protobuf
-import requests
 
 import logging
 import os
 import signal
 import sys
+import time
 
-from proto.telemetry_pb2 import ModbusBridgePayload
+from hasura_client import HasuraClient
+from mqtt_worker import GatewayWorker
 
-# ---------------------------------------------------------------------------
-# Constants (override via environment variables)
-# ---------------------------------------------------------------------------
+logger = logging.getLogger("gateway_translator")
 
-BROKER_HOST = os.getenv("MQTT_BROKER_HOST", "localhost")
-BROKER_PORT = int(os.getenv("MQTT_BROKER_PORT", "1883"))
-TELEMETRY_TOPIC = os.getenv("MQTT_TELEMETRY_TOPIC", "novamex/linea1/telemetry")
-UPSTREAM_URL = os.getenv("UPSTREAM_URL", "http://localhost:8080/api/telemetry")
-CLIENT_ID = os.getenv("MQTT_CLIENT_ID", "gateway-translator-rpi5")
+# Read environment variables (fail-fast if missing)
+HASURA_GRAPHQL_URL = os.environ.get("HASURA_GRAPHQL_URL")
+HASURA_ADMIN_SECRET = os.environ.get("HASURA_ADMIN_SECRET")
+MQTT_BROKER_HOST = os.environ.get("MQTT_BROKER_HOST")
 
-# ---------------------------------------------------------------------------
-# MQTT callbacks
-# ---------------------------------------------------------------------------
+# NR-2: buffer cap (default 1000, 0 = unlimited)
+_BUFFER_MAX = int(os.environ.get("BUFFER_MAX", "1000"))
 
-def on_connect(client, userdata, flags, rc):
-    if rc == 0:
-        logger.info("Connected to MQTT broker at %s:%d", BROKER_HOST, BROKER_PORT)
-        client.subscribe(TELEMETRY_TOPIC, qos=1)
-    else:
-        logger.error("Connection refused (rc=%d)", rc)
+_shutdown_requested = False
 
 
-def on_message(client, userdata, msg):
-    """
-    Callback fired for each incoming telemetry message.
+def _check_env() -> None:
+    """Fail fast if any required environment variable is missing."""
+    missing: list[str] = []
 
-    Phase 1: log receipt only.
-    Phase 2+: deserialise Protobuf, validate, POST to upstream.
-    """
-    logger.debug("Received %d bytes on %s", len(msg.payload), msg.topic)
+    if not HASURA_GRAPHQL_URL:
+        missing.append("HASURA_GRAPHQL_URL")
+    if not HASURA_ADMIN_SECRET:
+        missing.append("HASURA_ADMIN_SECRET")
+    if not MQTT_BROKER_HOST:
+        missing.append("MQTT_BROKER_HOST")
 
-    # TODO(Phase 2): parse Protobuf, forward via requests.post(UPSTREAM_URL, ...)
-
-
-def on_disconnect(client, userdata, rc):
-    if rc != 0:
-        logger.warning("Unexpected disconnect (rc=%d) — will auto-reconnect", rc)
-
-
-# ---------------------------------------------------------------------------
-# Graceful shutdown
-# ---------------------------------------------------------------------------
-
-def handle_signal(signum, frame):
-    logger.info("Received signal %d — shutting down", signum)
-    client.disconnect()
-    client.loop_stop()
-    sys.exit(0)
+    if missing:
+        logger.fatal(
+            "Missing required environment variable(s): %s",
+            ", ".join(missing),
+        )
+        sys.exit(1)
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
+def _handle_signal(signum: int, _frame: object) -> None:
+    """Set the shutdown flag on SIGTERM/SIGINT for graceful shutdown."""
+    signame = signal.Signals(signum).name
+    logger.info("Received %s -- shutting down gracefully ...", signame)
+    global _shutdown_requested  # noqa: PLW0603
+    _shutdown_requested = True
+
+
+def main() -> None:
+    """Entry point: check env, wire signal handlers, run poll loop."""
+    _check_env()
+
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
+
+    hasura = HasuraClient(
+        endpoint_url=HASURA_GRAPHQL_URL,
+        admin_secret=HASURA_ADMIN_SECRET,
+    )
+    worker = GatewayWorker(
+        broker_host=MQTT_BROKER_HOST,
+        hasura_client=hasura,
+        max_buffer=_BUFFER_MAX,
+    )
+    worker.start()
+    logger.info("gateway_translator started -- flushing every 1s.")
+
+    # FR-7: health tracking
+    last_flush_time = time.monotonic()
+    health_interval = 60  # seconds between health logs
+    next_health_log = health_interval
+
+    while not _shutdown_requested:
+        time.sleep(1)
+        batch = worker.drain_buffer()
+        if not batch:
+            # FR-7: periodic health log
+            elapsed = time.monotonic()
+            if elapsed >= next_health_log:
+                next_health_log = elapsed + health_interval
+                age = elapsed - last_flush_time
+                logger.info(
+                    "HEALTH — MQTT=%s buffer=%d last_flush=%ds ago",
+                    "connected" if worker.is_connected else "DISCONNECTED",
+                    worker.buffer_size,
+                    int(age),
+                )
+            continue
+
+        ok = hasura.insert_telemetry_batch(batch)
+        if not ok:
+            logger.warning(
+                "Batch insert failed -- %d entries re-queued.",
+                len(batch),
+            )
+            for entry in batch:
+                worker.enqueue_telemetry(entry)
+        else:
+            last_flush_time = time.monotonic()
+
+    # FR-5: Final flush before shutdown — drain remaining buffer
+    final_batch = worker.drain_buffer()
+    if final_batch:
+        logger.info(
+            "Final flush: %d entries remaining in buffer.",
+            len(final_batch),
+        )
+        ok = hasura.insert_telemetry_batch(final_batch)
+        if ok:
+            logger.info("Final flush succeeded.")
+        else:
+            logger.warning(
+                "Final flush failed -- %d entries LOST.",
+                len(final_batch),
+            )
+
+    worker.stop()
+    logger.info("gateway_translator stopped.")
+
 
 if __name__ == "__main__":
     logging.basicConfig(
-        level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper()),
+        level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    logger = logging.getLogger("gateway_translator")
-
-    logger.info(
-        "gateway_translator starting — broker=%s:%d topic=%s",
-        BROKER_HOST, BROKER_PORT, TELEMETRY_TOPIC,
-    )
-
-    client = mqtt.Client(client_id=CLIENT_ID, protocol=mqtt.MQTTv311)
-    client.on_connect = on_connect
-    client.on_message = on_message
-    client.on_disconnect = on_disconnect
-
-    # Enable automatic reconnect
-    client.reconnect_delay_set(min_delay=1, max_delay=60)
-
-    signal.signal(signal.SIGINT, handle_signal)
-    signal.signal(signal.SIGTERM, handle_signal)
-
-    try:
-        client.connect(BROKER_HOST, BROKER_PORT, keepalive=60)
-        client.loop_forever()
-    except Exception as exc:
-        logger.critical("Fatal error: %s", exc)
-        sys.exit(1)
+    main()

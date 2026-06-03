@@ -88,12 +88,13 @@ TEST(TelemetryPayloadTest, JsonHasAllRequiredFields)
     TelemetryTestHarness harness;
     harness.produce_frames(5);
 
-    // Create collector with short interval
+    // Create collector with short interval and a test device_id
     TelemetryCollector collector(
         harness.mqtt,
         harness.orchestrator,
         harness.queue,
         harness.thermal,
+        "test_device_01",
         std::chrono::seconds{1});  // 1 s for fast test
 
     collector.start();
@@ -108,28 +109,65 @@ TEST(TelemetryPayloadTest, JsonHasAllRequiredFields)
         json = harness.mqtt.last_payload_;
     }
 
-    // Verify all required fields exist in the JSON
-    EXPECT_NE(json.find("\"uptime_sec\":"), std::string::npos);
-    EXPECT_NE(json.find("\"fps\":"), std::string::npos);
-    EXPECT_NE(json.find("\"frames_processed\":"), std::string::npos);
-    EXPECT_NE(json.find("\"frames_dropped\":"), std::string::npos);
-    EXPECT_NE(json.find("\"soc_temp_c\":"), std::string::npos);
-    EXPECT_NE(json.find("\"heap_resident_kb\":"), std::string::npos);
-    EXPECT_NE(json.find("\"defects_total\":"), std::string::npos);
-    EXPECT_NE(json.find("\"last_defect_ts\":"), std::string::npos);
+    // ── New unified schema: verify all 5 required top-level fields ──────────
+    EXPECT_NE(json.find("\"device_id\":"), std::string::npos)
+        << "Payload must contain device_id";
+    EXPECT_NE(json.find("\"device_type\":"), std::string::npos)
+        << "Payload must contain device_type";
+    EXPECT_NE(json.find("\"timestamp\":"), std::string::npos)
+        << "Payload must contain ISO 8601 timestamp";
+    EXPECT_NE(json.find("\"node_health\":"), std::string::npos)
+        << "Payload must contain node_health";
+    EXPECT_NE(json.find("\"metrics\":"), std::string::npos)
+        << "Payload must contain metrics array";
 
-    // Verify JSON is syntactically valid (starts with {, ends with })
+    // ── Verify device identity values ──────────────────────────────────────
+    EXPECT_NE(json.find("\"test_device_01\""), std::string::npos)
+        << "device_id must match the injected value";
+    EXPECT_NE(json.find("\"camera\""), std::string::npos)
+        << "device_type must be \"camera\"";
+
+    // ── Verify node_health is a valid enum value ────────────────────────────
+    EXPECT_NE(json.find("\"ONLINE\""), std::string::npos)
+        << "Default node_health should be ONLINE (temp <= 75)";
+
+    // ── Verify flat fields are GONE from root ──────────────────────────────
+    // These were previously at the top level; now they live in metrics[].
+    EXPECT_EQ(json.find("\"uptime_sec\":"), std::string::npos)
+        << "uptime_sec must NOT be a flat root field";
+    EXPECT_EQ(json.find("\"fps\":"), std::string::npos)
+        << "fps must NOT be a flat root field";
+    EXPECT_EQ(json.find("\"last_defect_ts\":"), std::string::npos)
+        << "last_defect_ts must NOT be a flat root field";
+
+    // ── Verify metrics[] array structure ───────────────────────────────────
+    auto metrics_start = json.find("\"metrics\":[");
+    ASSERT_NE(metrics_start, std::string::npos)
+        << "metrics must be a JSON array starting with [" << '\n'
+        << json;
+
+    // Each metric entry must contain "name" and "value"
+    EXPECT_NE(json.find("\"name\":"), std::string::npos)
+        << "Each metric entry must have a name field";
+    EXPECT_NE(json.find("\"value\":"), std::string::npos)
+        << "Each metric entry must have a value field";
+
+    // Some metrics have unit (uptime_sec → "s", soc_temp_c → °C, heap → kB)
+    EXPECT_NE(json.find("\"unit\":\"s\""), std::string::npos)
+        << "uptime_sec metric must have unit \"s\"";
+
+    // ── Verify JSON structural integrity ───────────────────────────────────
     EXPECT_EQ(json.front(), '{');
     EXPECT_EQ(json.back(), '}');
 
-    // Verify no trailing comma before closing brace
     auto close_brace = json.rfind('}');
     ASSERT_NE(close_brace, std::string::npos);
     if (close_brace > 1) {
-        EXPECT_NE(json[close_brace - 1], ',');
+        EXPECT_NE(json[close_brace - 1], ',')
+            << "No trailing comma before closing brace";
     }
 
-    // Verify topic
+    // ── Verify topic ───────────────────────────────────────────────────────
     EXPECT_EQ(harness.mqtt.last_topic_, "novamex/vision/telemetry");
 }
 
@@ -146,6 +184,7 @@ TEST(TelemetryLifecycleTest, StartStopIsIdempotent)
         harness.orchestrator,
         harness.queue,
         harness.thermal,
+        "test_device_01",
         std::chrono::seconds{30});
 
     EXPECT_FALSE(collector.is_running());
@@ -181,6 +220,7 @@ TEST(TelemetryFpsTest, CalculatesFpsFromFrameDelta)
         harness.orchestrator,
         harness.queue,
         harness.thermal,
+        "test_device_01",
         std::chrono::seconds{1});
 
     // Start the collector.  last_frames_ snapshot is taken here.
@@ -209,13 +249,18 @@ TEST(TelemetryFpsTest, CalculatesFpsFromFrameDelta)
     }
 
     // Check FPS is positive (we produced frames, interval is 1s)
-    auto fps_pos = payload.find("\"fps\":");
-    ASSERT_NE(fps_pos, std::string::npos);
+    // In the new schema, fps lives in metrics[] as {"name":"fps","value":15.0}
+    auto fps_name_pos = payload.find("\"name\":\"fps\"");
+    ASSERT_NE(fps_name_pos, std::string::npos);
 
-    // Extract the fps value
-    auto after_key = fps_pos + 6;  // past "fps:"
+    // Find the "value" key after the fps name entry
+    auto value_pos = payload.find("\"value\":", fps_name_pos);
+    ASSERT_NE(value_pos, std::string::npos);
+    auto after_key = value_pos + 8;  // past "\"value\":"
     auto comma = payload.find(',', after_key);
-    std::string fps_str = payload.substr(after_key, comma - after_key);
+    auto brace = payload.find('}', after_key);
+    auto end_pos = (comma != std::string::npos && comma < brace) ? comma : brace;
+    std::string fps_str = payload.substr(after_key, end_pos - after_key);
     double fps = std::stod(fps_str);
 
     EXPECT_GT(fps, 0.0) << "FPS should be positive when frames were produced";
@@ -236,6 +281,7 @@ TEST(TelemetryShutdownTest, StopReturnsQuicklyDuringSleep)
         harness.orchestrator,
         harness.queue,
         harness.thermal,
+        "test_device_01",
         std::chrono::seconds{300});  // 5 min interval — will be sleeping
 
     collector.start();
