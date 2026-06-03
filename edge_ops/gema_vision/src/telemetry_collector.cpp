@@ -24,11 +24,13 @@ TelemetryCollector::TelemetryCollector(
     const InferenceOrchestrator& orchestrator,
     const ThreadSafeQueue<std::shared_ptr<cv::Mat>>& frame_queue,
     const ThermalMonitor& thermal,
+    const std::string& device_id,
     std::chrono::seconds interval) noexcept
     : mqtt_(mqtt)
     , orchestrator_(orchestrator)
     , frame_queue_(frame_queue)
     , thermal_(thermal)
+    , device_id_(device_id)
     , interval_(interval)
 {
 }
@@ -108,36 +110,40 @@ std::string TelemetryCollector::build_payload(
     int temp_c,
     uint64_t vmrss_kb,
     uint64_t defects_total,
-    uint64_t last_defect_epoch) const
+    uint64_t /* last_defect_epoch */) const
 {
     auto now = std::chrono::steady_clock::now();
     auto uptime = std::chrono::duration_cast<std::chrono::seconds>(
         now - start_time_).count();
 
-    // Build ISO-8601 from epoch if a defect has been recorded.
-    std::string last_defect_ts;
-    if (last_defect_epoch > 0) {
-        std::time_t t = static_cast<std::time_t>(last_defect_epoch);
-        std::tm tm_buf;
-        char buf[32];
-        gmtime_r(&t, &tm_buf);
-        std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
-        last_defect_ts = buf;
-    }
+    // Build ISO-8601 timestamp from system clock.
+    std::time_t t = std::time(nullptr);
+    std::tm tm_buf;
+    char ts_buf[32];
+    gmtime_r(&t, &tm_buf);
+    std::strftime(ts_buf, sizeof(ts_buf), "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
+    std::string timestamp(ts_buf);
+
+    // Determine node_health per spec: soc_temp_c > 75 → WARNING
+    const char* node_health = (temp_c > 75) ? "WARNING" : "ONLINE";
 
     // Strict JSON — no trailing commas, all values typed.
+    // Unified schema: device_id, device_type, timestamp, node_health, metrics[]
     std::ostringstream json;
     json << "{"
-         << "\"uptime_sec\":" << uptime << ","
-         << "\"fps\":" << fps << ","
-         << "\"frames_processed\":" << frames_total << ","
-         << "\"frames_dropped\":" << dropped << ","
-         << "\"soc_temp_c\":" << temp_c << ","
-         << "\"heap_resident_kb\":" << vmrss_kb << ","
-         << "\"defects_total\":" << defects_total << ","
-         << "\"last_defect_ts\":\""
-         << last_defect_ts << "\""
-         << "}";
+         << "\"device_id\":\"" << device_id_ << "\","
+         << "\"device_type\":\"camera\","
+         << "\"timestamp\":\"" << timestamp << "\","
+         << "\"node_health\":\"" << node_health << "\","
+         << "\"metrics\":["
+         << "{\"name\":\"uptime_sec\",\"value\":" << uptime << ",\"unit\":\"s\"},"
+         << "{\"name\":\"fps\",\"value\":" << fps << "},"
+         << "{\"name\":\"frames_processed\",\"value\":" << frames_total << "},"
+         << "{\"name\":\"frames_dropped\",\"value\":" << dropped << "},"
+         << "{\"name\":\"soc_temp_c\",\"value\":" << temp_c << ",\"unit\":\"\\u00b0C\"},"
+         << "{\"name\":\"heap_resident_kb\",\"value\":" << vmrss_kb << ",\"unit\":\"kB\"},"
+         << "{\"name\":\"defects_total\",\"value\":" << defects_total << "}"
+         << "]}";
 
     return json.str();
 }
