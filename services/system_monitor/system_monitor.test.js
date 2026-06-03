@@ -31,9 +31,9 @@ describe('System Monitor — Business Logic & Rules', () => {
   });
 
   describe('evaluateHealthState', () => {
-    it('should return OK when CPU and RAM are under limits', () => {
-      assert.equal(evaluateHealthState(45.0, 60), 'OK');
-      assert.equal(evaluateHealthState(75.0, 90), 'OK');
+    it('should return ONLINE when CPU and RAM are under limits', () => {
+      assert.equal(evaluateHealthState(45.0, 60), 'ONLINE');
+      assert.equal(evaluateHealthState(75.0, 90), 'ONLINE');
     });
 
     it('should return WARNING if CPU temperature exceeds 75 degrees', () => {
@@ -61,18 +61,15 @@ describe('System Monitor — Business Logic & Rules', () => {
       });
 
       assert.deepEqual(payload, {
-        enterprise: 'novamex',
-        site: 'ibarra',
-        area: 'it_infra',
         device_id: 'rpi_gateway_01',
+        device_type: 'gateway',
         timestamp: '2026-05-19T00:00:00.000Z',
-        health: 'OK',
-        node_health: 'OK',
-        metrics: {
-          cpu_temp_celsius: 52.5,
-          ram_usage_percent: 70,
-          disk_free_mb: 12500
-        }
+        node_health: 'ONLINE',
+        metrics: [
+          { name: 'cpu_temp_celsius', value: 52.5, unit: '°C' },
+          { name: 'ram_usage_percent', value: 70 },
+          { name: 'disk_free_mb', value: 12500, unit: 'MB' }
+        ]
       });
     });
 
@@ -84,7 +81,6 @@ describe('System Monitor — Business Logic & Rules', () => {
         timestamp: '2026-05-19T00:00:00.000Z'
       });
 
-      assert.equal(payload.health, 'WARNING');
       assert.equal(payload.node_health, 'WARNING');
     });
   });
