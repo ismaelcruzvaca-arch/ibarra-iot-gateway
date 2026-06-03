@@ -3,3 +3,4 @@ node_modules/
 .env
 docker/certs/
 engram-full-backup*.json
+edge_nodes/norvi_monitor/include/secrets.h
